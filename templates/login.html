@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+{% block title %}Sign in — SkyIQ{% endblock %}
+
+{% block head %}
+<style>
+  .auth-page {
+    min-height: calc(100vh - var(--nav-h));
+    display: flex; align-items: center; justify-content: center;
+    padding: 40px 24px;
+  }
+  .auth-wrap { width: 100%; max-width: 440px; }
+
+  .auth-logo {
+    text-align: center; margin-bottom: 32px;
+  }
+  .auth-logo .logo-mark {
+    width: 44px; height: 44px;
+    background: var(--accent);
+    border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-display);
+    font-size: 20px; font-weight: 700; color: #fff;
+    margin: 0 auto 12px;
+  }
+  .auth-title {
+    font-family: var(--font-display);
+    font-size: 28px; font-weight: 700;
+    letter-spacing: -0.8px;
+    margin-bottom: 6px;
+  }
+  .auth-sub { font-size: 15px; color: var(--text-secondary); }
+
+  /* Tabs */
+  .auth-tabs {
+    display: grid; grid-template-columns: 1fr 1fr;
+    background: var(--bg-3);
+    border-radius: var(--radius-md);
+    padding: 4px;
+    margin-bottom: 28px;
+  }
+  .auth-tab {
+    padding: 9px;
+    text-align: center;
+    font-size: 14px; font-weight: 500;
+    color: var(--text-tertiary);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: var(--transition);
+    border: none; background: none;
+  }
+  .auth-tab.active {
+    background: var(--surface);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+  }
+
+  .auth-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    padding: 32px;
+  }
+
+  .auth-form { display: flex; flex-direction: column; gap: 16px; }
+  .auth-form .form-group { gap: 6px; }
+
+  .auth-divider {
+    text-align: center;
+    position: relative;
+    margin: 8px 0;
+  }
+  .auth-divider::before {
+    content: '';
+    position: absolute; top: 50%; left: 0; right: 0;
+    height: 1px; background: var(--border);
+  }
+  .auth-divider span {
+    position: relative; background: var(--surface);
+    padding: 0 12px; font-size: 12px; color: var(--text-tertiary);
+  }
+
+  .auth-submit {
+    width: 100%;
+    padding: 14px;
+    font-size: 15px; font-weight: 500;
+    background: var(--accent); color: #fff;
+    border-radius: var(--radius-md);
+    border: none; cursor: pointer;
+    transition: var(--transition);
+    font-family: var(--font-body);
+  }
+  .auth-submit:hover { background: #1a7fcf; }
+
+  .auth-footer {
+    text-align: center; margin-top: 20px;
+    font-size: 13px; color: var(--text-tertiary);
+  }
+  .auth-footer a { color: var(--accent); }
+
+  /* Panel visibility */
+  #panel-register { display: none; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="auth-page">
+  <div class="auth-wrap">
+
+    <!-- Logo -->
+    <div class="auth-logo">
+      <div class="logo-mark">S</div>
+      <h1 class="auth-title">Welcome to SkyIQ</h1>
+      <p class="auth-sub">Sign in to save your search history and predictions.</p>
+    </div>
+
+    <!-- Tabs -->
+    <div class="auth-tabs">
+      <button class="auth-tab active" id="tab-login" onclick="switchTab('login')">Sign in</button>
+      <button class="auth-tab" id="tab-register" onclick="switchTab('register')">Create account</button>
+    </div>
+
+    <!-- Login Panel -->
+    <div class="auth-card" id="panel-login">
+      <form action="/login" method="POST" class="auth-form">
+        <input type="hidden" name="tab" value="login">
+        <div class="form-group">
+          <label class="form-label" for="email-login">Email</label>
+          <input type="email" id="email-login" name="email"
+                 placeholder="you@example.com"
+                 class="form-input" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="password-login">Password</label>
+          <input type="password" id="password-login" name="password"
+                 placeholder="••••••••"
+                 class="form-input" required>
+        </div>
+        <button type="submit" class="auth-submit">Sign in</button>
+      </form>
+    </div>
+
+    <!-- Register Panel -->
+    <div class="auth-card" id="panel-register">
+      <form action="/register" method="POST" class="auth-form">
+        <div class="form-group">
+          <label class="form-label" for="username">Username</label>
+          <input type="text" id="username" name="username"
+                 placeholder="e.g. apa_mestry"
+                 class="form-input" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="email-reg">Email</label>
+          <input type="email" id="email-reg" name="email"
+                 placeholder="you@example.com"
+                 class="form-input" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="password-reg">Password</label>
+          <input type="password" id="password-reg" name="password"
+                 placeholder="Min. 8 characters"
+                 class="form-input" minlength="8" required>
+        </div>
+        <button type="submit" class="auth-submit">Create account</button>
+      </form>
+    </div>
+
+    <div class="auth-footer">
+      By continuing, you agree to our terms of service.
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Check if URL has ?tab=register
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('tab') === 'register') switchTab('register');
+
+  function switchTab(tab) {
+    const isLogin = tab === 'login';
+    document.getElementById('panel-login').style.display    = isLogin ? 'block' : 'none';
+    document.getElementById('panel-register').style.display = isLogin ? 'none'  : 'block';
+    document.getElementById('tab-login').classList.toggle('active', isLogin);
+    document.getElementById('tab-register').classList.toggle('active', !isLogin);
+  }
+</script>
+{% endblock %}

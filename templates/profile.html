@@ -1,0 +1,237 @@
+{% extends "base.html" %}
+{% block title %}Profile — SkyIQ{% endblock %}
+
+{% block head %}
+<style>
+  .profile-page { padding: 56px 0 80px; }
+
+  /* ── USER HEADER ─────────────────────────────────────── */
+  .profile-header {
+    padding: 48px 24px 40px;
+    max-width: 1080px; margin: 0 auto;
+    display: flex; align-items: center; gap: 24px;
+    flex-wrap: wrap;
+  }
+  .avatar {
+    width: 72px; height: 72px;
+    background: var(--accent-dim);
+    border: 2px solid var(--accent);
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-display);
+    font-size: 28px; font-weight: 700;
+    color: var(--accent);
+    flex-shrink: 0;
+  }
+  .profile-info h1 {
+    font-family: var(--font-display);
+    font-size: 28px; font-weight: 700;
+    letter-spacing: -0.8px;
+    margin-bottom: 4px;
+  }
+  .profile-meta { font-size: 14px; color: var(--text-tertiary); }
+
+  /* ── STATS ───────────────────────────────────────────── */
+  .profile-stats {
+    display: grid; grid-template-columns: repeat(3,1fr);
+    gap: 14px;
+    max-width: 1080px; margin: 0 auto 40px; padding: 0 24px;
+  }
+  @media(max-width:600px) { .profile-stats { grid-template-columns: 1fr; } }
+  .pstat {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 22px 24px;
+  }
+  .pstat-num {
+    font-family: var(--font-display);
+    font-size: 32px; font-weight: 700;
+    letter-spacing: -1px; color: var(--text-primary);
+    margin-bottom: 4px;
+  }
+  .pstat-label { font-size: 12px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.06em; }
+
+  /* ── HISTORY TABLE ───────────────────────────────────── */
+  .history-wrap {
+    max-width: 1080px; margin: 0 auto; padding: 0 24px;
+  }
+  .section-head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 16px;
+  }
+  .history-table-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+  }
+  .htable { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .htable th {
+    text-align: left; padding: 12px 20px;
+    font-size: 11px; font-weight: 500;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--text-tertiary);
+    background: var(--bg-3);
+    border-bottom: 1px solid var(--border);
+  }
+  .htable td {
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-secondary);
+    vertical-align: middle;
+  }
+  .htable tr:last-child td { border-bottom: none; }
+  .htable tr:hover td { background: rgba(255,255,255,0.02); }
+
+  .flight-pill {
+    font-family: var(--font-mono);
+    font-size: 13px; font-weight: 500;
+    color: var(--text-primary);
+    background: var(--bg-3);
+    padding: 4px 10px;
+    border-radius: 6px;
+    display: inline-block;
+  }
+  .route-text { color: var(--text-tertiary); font-size: 12px; }
+
+  .prob-cell {
+    font-family: var(--font-display);
+    font-size: 16px; font-weight: 700;
+    letter-spacing: -0.4px;
+  }
+
+  .feedback-icon { font-size: 16px; }
+
+  .rerun-btn {
+    font-size: 12px; font-weight: 500;
+    color: var(--accent);
+    background: var(--accent-dim);
+    padding: 5px 12px;
+    border-radius: 6px;
+    border: none; cursor: pointer;
+    transition: var(--transition);
+    white-space: nowrap;
+  }
+  .rerun-btn:hover { background: rgba(41,151,255,0.25); }
+
+  .empty-history {
+    text-align: center; padding: 64px 24px;
+    color: var(--text-tertiary);
+  }
+
+  @media(max-width:640px) {
+    .htable .hide-mobile { display: none; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="profile-page">
+
+  <!-- ── HEADER ─────────────────────────────────────────── -->
+  <div class="profile-header">
+    <div class="avatar">{{ user.username[0].upper() }}</div>
+    <div class="profile-info">
+      <h1>{{ user.username }}</h1>
+      <div class="profile-meta">{{ user.email }} · Member since {{ user.created_at.strftime('%b %Y') }}</div>
+    </div>
+    <div style="margin-left:auto;">
+      <a href="/logout" class="btn btn-secondary btn-sm">Sign out</a>
+    </div>
+  </div>
+
+  <!-- ── STATS ──────────────────────────────────────────── -->
+  <div class="profile-stats">
+    <div class="pstat fade-up">
+      <div class="pstat-num">{{ stats.total_searches }}</div>
+      <div class="pstat-label">Total searches</div>
+    </div>
+    <div class="pstat fade-up">
+      <div class="pstat-num text-red">{{ stats.delayed_predictions }}</div>
+      <div class="pstat-label">Predicted delayed</div>
+    </div>
+    <div class="pstat fade-up">
+      <div class="pstat-num text-green">{{ stats.ontime_predictions }}</div>
+      <div class="pstat-label">Predicted on time</div>
+    </div>
+  </div>
+
+  <!-- ── HISTORY TABLE ──────────────────────────────────── -->
+  <div class="history-wrap">
+    <div class="section-head">
+      <h2 class="display-sm">Search history</h2>
+      <span class="text-dim" style="font-size:13px;">{{ history | length }} searches</span>
+    </div>
+
+    <div class="history-table-card fade-up">
+      {% if history %}
+      <table class="htable">
+        <thead>
+          <tr>
+            <th>Flight</th>
+            <th class="hide-mobile">Route</th>
+            <th class="hide-mobile">Date</th>
+            <th>Probability</th>
+            <th>Risk</th>
+            <th class="hide-mobile">Feedback</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for h in history %}
+          <tr>
+            <td>
+              <span class="flight-pill">{{ h.flight_number }}</span><br>
+              <span class="route-text">{{ h.airline_code }}</span>
+            </td>
+            <td class="hide-mobile">
+              <span style="font-family:var(--font-mono);font-size:12px;color:var(--text-secondary);">
+                {{ h.origin }} → {{ h.destination }}
+              </span>
+            </td>
+            <td class="hide-mobile" style="color:var(--text-tertiary);font-size:12px;">
+              {{ h.queried_flight_date }}
+            </td>
+            <td>
+              <span class="prob-cell text-{{ 'green' if h.delay_probability < 0.35 else ('amber' if h.delay_probability < 0.65 else 'red') }}">
+                {{ (h.delay_probability * 100) | round(0) | int }}%
+              </span>
+            </td>
+            <td>
+              <span class="badge badge-{{ 'green' if h.risk_level == 'Low' else ('amber' if h.risk_level == 'Medium' else 'red') }}">
+                {{ h.risk_level }}
+              </span>
+            </td>
+            <td class="hide-mobile">
+              {% if h.user_confirmed_delayed is none %}
+                <span style="font-size:12px;color:var(--text-tertiary);">Pending</span>
+              {% elif h.user_confirmed_delayed %}
+                <span class="feedback-icon">✗</span>
+                <span style="font-size:12px;color:var(--red);">Was delayed</span>
+              {% else %}
+                <span class="feedback-icon">✓</span>
+                <span style="font-size:12px;color:var(--green);">Was on time</span>
+              {% endif %}
+            </td>
+            <td>
+              <a href="/predict?flight_no={{ h.flight_number }}&origin={{ h.origin }}&destination={{ h.destination }}&date={{ h.queried_flight_date }}"
+                 class="rerun-btn">Re-run →</a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+        <div class="empty-history">
+          <p style="font-size:40px;margin-bottom:12px;">🔍</p>
+          <h3 class="display-sm mb-8">No searches yet</h3>
+          <p class="body-md mb-16">Your prediction history will appear here.</p>
+          <a href="/predict" class="btn btn-primary">Make your first prediction</a>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+{% endblock %}

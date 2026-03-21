@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>{% block title %}SkyIQ — Flight Delay Intelligence{% endblock %}</title>
+
+  <!-- Fonts: SF-like pairing — Outfit (display) + DM Sans (body) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=DM+Sans:wght@300;400;500&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <!-- Chart.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+
+  <style>
+    /* ─── DESIGN TOKENS ─────────────────────────────────── */
+    :root {
+      --bg:           #000000;
+      --bg-1:         #0a0a0a;
+      --bg-2:         #111111;
+      --bg-3:         #1a1a1a;
+      --bg-4:         #222222;
+      --surface:      #161616;
+      --surface-2:    #1e1e1e;
+      --border:       rgba(255,255,255,0.08);
+      --border-light: rgba(255,255,255,0.14);
+      --text-primary:   #f5f5f7;
+      --text-secondary: #a1a1a6;
+      --text-tertiary:  #6e6e73;
+      --accent:       #2997ff;
+      --accent-dim:   rgba(41,151,255,0.15);
+      --accent-glow:  rgba(41,151,255,0.3);
+      --green:        #30d158;
+      --green-dim:    rgba(48,209,88,0.15);
+      --red:          #ff453a;
+      --red-dim:      rgba(255,69,58,0.15);
+      --amber:        #ffd60a;
+      --amber-dim:    rgba(255,214,10,0.12);
+      --radius-sm:    8px;
+      --radius-md:    14px;
+      --radius-lg:    20px;
+      --radius-xl:    28px;
+      --font-display: 'Outfit', sans-serif;
+      --font-body:    'DM Sans', sans-serif;
+      --font-mono:    'DM Mono', monospace;
+      --nav-h:        52px;
+      --transition:   all 0.25s cubic-bezier(0.4,0,0.2,1);
+    }
+
+    /* ─── RESET ─────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      background: var(--bg);
+      color: var(--text-primary);
+      font-family: var(--font-body);
+      font-size: 16px;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      min-height: 100vh;
+    }
+    a { color: inherit; text-decoration: none; }
+    button { cursor: pointer; border: none; outline: none; background: none; font-family: var(--font-body); }
+    input, select { font-family: var(--font-body); }
+
+    /* ─── NAVBAR ─────────────────────────────────────────── */
+    .navbar {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 1000;
+      height: var(--nav-h);
+      background: rgba(0,0,0,0.72);
+      backdrop-filter: saturate(180%) blur(20px);
+      -webkit-backdrop-filter: saturate(180%) blur(20px);
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center;
+    }
+    .nav-inner {
+      max-width: 1080px; margin: 0 auto; width: 100%;
+      padding: 0 24px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .nav-logo {
+      font-family: var(--font-display);
+      font-size: 18px; font-weight: 600;
+      color: var(--text-primary);
+      letter-spacing: -0.3px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .nav-logo .logo-mark {
+      width: 26px; height: 26px;
+      background: var(--accent);
+      border-radius: 7px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 13px; font-weight: 700; color: #fff;
+    }
+    .nav-links {
+      display: flex; align-items: center; gap: 4px;
+      list-style: none;
+    }
+    .nav-links a {
+      font-size: 13px; font-weight: 400;
+      color: var(--text-secondary);
+      padding: 6px 12px;
+      border-radius: var(--radius-sm);
+      transition: var(--transition);
+    }
+    .nav-links a:hover, .nav-links a.active {
+      color: var(--text-primary);
+      background: var(--bg-3);
+    }
+    .nav-links a.active { color: var(--accent); }
+    .nav-actions { display: flex; align-items: center; gap: 8px; }
+    .btn-nav {
+      font-size: 13px; font-weight: 500;
+      padding: 7px 16px;
+      border-radius: 20px;
+      transition: var(--transition);
+    }
+    .btn-nav-ghost {
+      color: var(--text-secondary);
+      background: transparent;
+    }
+    .btn-nav-ghost:hover { color: var(--text-primary); }
+    .btn-nav-primary {
+      background: var(--accent);
+      color: #fff;
+    }
+    .btn-nav-primary:hover { background: #1a7fcf; }
+
+    /* ─── PAGE WRAPPER ───────────────────────────────────── */
+    .page-body {
+      padding-top: var(--nav-h);
+      min-height: 100vh;
+    }
+
+    /* ─── CONTAINER ──────────────────────────────────────── */
+    .container {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+    .container-sm {
+      max-width: 680px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* ─── TYPOGRAPHY ─────────────────────────────────────── */
+    .display-xl {
+      font-family: var(--font-display);
+      font-size: clamp(48px, 7vw, 80px);
+      font-weight: 700;
+      line-height: 1.05;
+      letter-spacing: -2px;
+      color: var(--text-primary);
+    }
+    .display-lg {
+      font-family: var(--font-display);
+      font-size: clamp(36px, 5vw, 56px);
+      font-weight: 600;
+      line-height: 1.1;
+      letter-spacing: -1.5px;
+    }
+    .display-md {
+      font-family: var(--font-display);
+      font-size: clamp(24px, 3vw, 32px);
+      font-weight: 600;
+      letter-spacing: -0.8px;
+    }
+    .display-sm {
+      font-family: var(--font-display);
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: -0.4px;
+    }
+    .label {
+      font-size: 12px; font-weight: 500;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-tertiary);
+    }
+    .body-lg { font-size: 18px; line-height: 1.7; color: var(--text-secondary); }
+    .body-md { font-size: 15px; line-height: 1.65; color: var(--text-secondary); }
+
+    /* ─── CARDS ──────────────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 28px;
+      transition: var(--transition);
+    }
+    .card:hover { border-color: var(--border-light); }
+    .card-glass {
+      background: rgba(255,255,255,0.03);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 28px;
+    }
+
+    /* ─── BUTTONS ────────────────────────────────────────── */
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      font-size: 15px; font-weight: 500;
+      padding: 12px 24px;
+      border-radius: 980px;
+      transition: var(--transition);
+      cursor: pointer;
+    }
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+    }
+    .btn-primary:hover { background: #1a7fcf; transform: scale(1.01); }
+    .btn-secondary {
+      background: var(--bg-3);
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+    }
+    .btn-secondary:hover { background: var(--bg-4); border-color: var(--border-light); }
+    .btn-ghost {
+      background: transparent;
+      color: var(--accent);
+    }
+    .btn-ghost:hover { background: var(--accent-dim); }
+    .btn-lg { font-size: 17px; padding: 16px 32px; }
+    .btn-sm { font-size: 13px; padding: 8px 18px; }
+
+    /* ─── FORM ELEMENTS ──────────────────────────────────── */
+    .form-group { display: flex; flex-direction: column; gap: 8px; }
+    .form-label {
+      font-size: 13px; font-weight: 500;
+      color: var(--text-secondary);
+    }
+    .form-input, .form-select {
+      background: var(--bg-3);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      color: var(--text-primary);
+      font-size: 15px; font-weight: 400;
+      padding: 13px 16px;
+      transition: var(--transition);
+      width: 100%;
+      appearance: none;
+      -webkit-appearance: none;
+    }
+    .form-input::placeholder { color: var(--text-tertiary); }
+    .form-input:focus, .form-select:focus {
+      outline: none;
+      border-color: var(--accent);
+      background: var(--bg-4);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+    .form-select {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%236e6e73' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 14px center;
+      padding-right: 40px;
+      cursor: pointer;
+    }
+    .form-select option { background: var(--bg-3); color: var(--text-primary); }
+
+    /* ─── BADGES ─────────────────────────────────────────── */
+    .badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: 12px; font-weight: 500;
+      padding: 4px 10px;
+      border-radius: 980px;
+    }
+    .badge-green  { background: var(--green-dim);  color: var(--green); }
+    .badge-red    { background: var(--red-dim);    color: var(--red); }
+    .badge-amber  { background: var(--amber-dim);  color: var(--amber); }
+    .badge-blue   { background: var(--accent-dim); color: var(--accent); }
+
+    /* ─── DIVIDERS ───────────────────────────────────────── */
+    .divider {
+      height: 1px;
+      background: var(--border);
+      margin: 32px 0;
+    }
+
+    /* ─── FLASH MESSAGES ─────────────────────────────────── */
+    .flash {
+      padding: 14px 20px;
+      border-radius: var(--radius-md);
+      font-size: 14px; font-weight: 400;
+      margin-bottom: 16px;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .flash-error   { background: var(--red-dim);   color: var(--red);   border: 1px solid rgba(255,69,58,0.2); }
+    .flash-success { background: var(--green-dim); color: var(--green); border: 1px solid rgba(48,209,88,0.2); }
+    .flash-info    { background: var(--accent-dim);color: var(--accent);border: 1px solid rgba(41,151,255,0.2); }
+
+    /* ─── FOOTER ─────────────────────────────────────────── */
+    .footer {
+      border-top: 1px solid var(--border);
+      padding: 40px 0 32px;
+      margin-top: 80px;
+    }
+    .footer-inner {
+      max-width: 1080px; margin: 0 auto; padding: 0 24px;
+      display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 16px;
+    }
+    .footer-brand {
+      font-family: var(--font-display);
+      font-size: 14px; font-weight: 600;
+      color: var(--text-secondary);
+    }
+    .footer-copy {
+      font-size: 12px; color: var(--text-tertiary);
+    }
+
+    /* ─── SCROLL ANIMATIONS ──────────────────────────────── */
+    .fade-up {
+      opacity: 0;
+      transform: translateY(24px);
+      transition: opacity 0.6s ease, transform 0.6s ease;
+    }
+    .fade-up.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* ─── SCROLLBAR ──────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--bg-4); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--bg-3); }
+
+    /* ─── UTILITY ────────────────────────────────────────── */
+    .text-accent   { color: var(--accent); }
+    .text-green    { color: var(--green); }
+    .text-red      { color: var(--red); }
+    .text-amber    { color: var(--amber); }
+    .text-muted    { color: var(--text-secondary); }
+    .text-dim      { color: var(--text-tertiary); }
+    .text-center   { text-align: center; }
+    .mt-8  { margin-top: 8px; }
+    .mt-12 { margin-top: 12px; }
+    .mt-16 { margin-top: 16px; }
+    .mt-24 { margin-top: 24px; }
+    .mt-32 { margin-top: 32px; }
+    .mt-48 { margin-top: 48px; }
+    .mt-64 { margin-top: 64px; }
+    .mb-8  { margin-bottom: 8px; }
+    .mb-16 { margin-bottom: 16px; }
+    .mb-24 { margin-bottom: 24px; }
+    .mb-32 { margin-bottom: 32px; }
+    .gap-8  { gap: 8px; }
+    .gap-12 { gap: 12px; }
+    .gap-16 { gap: 16px; }
+    .gap-24 { gap: 24px; }
+    .flex { display: flex; }
+    .flex-col { flex-direction: column; }
+    .items-center { align-items: center; }
+    .justify-between { justify-content: space-between; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+    @media (max-width: 768px) {
+      .grid-2, .grid-3 { grid-template-columns: 1fr; }
+      .nav-links { display: none; }
+      .display-xl { font-size: 40px; letter-spacing: -1px; }
+    }
+  </style>
+
+  {% block head %}{% endblock %}
+</head>
+<body>
+
+<!-- ── NAVBAR ───────────────────────────────────────────── -->
+<nav class="navbar">
+  <div class="nav-inner">
+    <a href="/" class="nav-logo">
+      <div class="logo-mark">S</div>
+      SkyIQ
+    </a>
+    <ul class="nav-links">
+      <li><a href="/"          class="{% if request.endpoint == 'index'     %}active{% endif %}">Home</a></li>
+      <li><a href="/predict"   class="{% if request.endpoint == 'predict'   %}active{% endif %}">Predict</a></li>
+      <li><a href="/dashboard" class="{% if request.endpoint == 'dashboard' %}active{% endif %}">Dashboard</a></li>
+      <li><a href="/compare"   class="{% if request.endpoint == 'compare'   %}active{% endif %}">Compare</a></li>
+    </ul>
+    <div class="nav-actions">
+      {% if session.user_id %}
+        <a href="/profile" class="btn-nav btn-nav-ghost">{{ session.username }}</a>
+        <a href="/logout"  class="btn-nav btn-nav-ghost">Sign out</a>
+      {% else %}
+        <a href="/login"   class="btn-nav btn-nav-ghost">Sign in</a>
+        <a href="/login?tab=register" class="btn-nav btn-nav-primary">Get started</a>
+      {% endif %}
+    </div>
+  </div>
+</nav>
+
+<!-- ── FLASH MESSAGES ────────────────────────────────────── -->
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+    <div style="position:fixed;top:62px;left:50%;transform:translateX(-50%);z-index:999;width:100%;max-width:480px;padding:0 16px;">
+      {% for category, message in messages %}
+        <div class="flash flash-{{ category }}">{{ message }}</div>
+      {% endfor %}
+    </div>
+  {% endif %}
+{% endwith %}
+
+<!-- ── PAGE CONTENT ──────────────────────────────────────── -->
+<div class="page-body">
+  {% block content %}{% endblock %}
+</div>
+
+<!-- ── FOOTER ───────────────────────────────────────────── -->
+<footer class="footer">
+  <div class="footer-inner">
+    <span class="footer-brand">SkyIQ</span>
+    <span class="footer-copy">MCA Group 3 — Apa Mestry & Brandon Noronha</span>
+    <span class="footer-copy">Flight Delay Prediction System</span>
+  </div>
+</footer>
+
+<script>
+  // Scroll-triggered fade-in animations
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach((e, i) => {
+      if (e.isIntersecting) {
+        setTimeout(() => e.target.classList.add('visible'), i * 80);
+      }
+    });
+  }, { threshold: 0.1 });
+  document.querySelectorAll('.fade-up').forEach(el => observer.observe(el));
+</script>
+
+{% block scripts %}{% endblock %}
+</body>
+</html>

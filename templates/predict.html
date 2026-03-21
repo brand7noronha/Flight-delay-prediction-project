@@ -1,0 +1,274 @@
+{% extends "base.html" %}
+{% block title %}Predict — SkyIQ{% endblock %}
+
+{% block head %}
+<style>
+  .predict-hero {
+    padding: 64px 0 48px;
+    text-align: center;
+  }
+  .predict-form-wrap {
+    max-width: 720px;
+    margin: 0 auto 80px;
+    padding: 0 24px;
+  }
+  .form-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    padding: 40px;
+  }
+  .form-section-title {
+    font-family: var(--font-display);
+    font-size: 13px; font-weight: 500;
+    color: var(--text-tertiary);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 20px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .form-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+  @media(max-width:580px) {
+    .form-row, .form-row-3 { grid-template-columns: 1fr; }
+    .form-card { padding: 24px; }
+  }
+  .form-divider { height: 1px; background: var(--border); margin: 28px 0; }
+
+  .submit-row {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-top: 32px; flex-wrap: wrap; gap: 12px;
+  }
+  .submit-hint { font-size: 13px; color: var(--text-tertiary); }
+
+  .info-tooltip {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 12px; color: var(--accent);
+    margin-top: 6px;
+  }
+
+  /* Side info panel */
+  .predict-layout {
+    display: grid;
+    grid-template-columns: 1fr 300px;
+    gap: 24px;
+    max-width: 1080px;
+    margin: 0 auto 80px;
+    padding: 0 24px;
+    align-items: start;
+  }
+  @media(max-width:900px) {
+    .predict-layout { grid-template-columns: 1fr; }
+    .predict-sidebar { display: none; }
+  }
+
+  .sidebar-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 24px;
+    position: sticky; top: 72px;
+  }
+  .sidebar-title {
+    font-family: var(--font-display);
+    font-size: 15px; font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 16px;
+  }
+  .sidebar-tip {
+    display: flex; gap: 10px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px; color: var(--text-secondary);
+    line-height: 1.5;
+  }
+  .sidebar-tip:last-child { border-bottom: none; }
+  .tip-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+
+  .feature-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--green-dim);
+    color: var(--green);
+    font-size: 12px; font-weight: 500;
+    padding: 4px 10px;
+    border-radius: 980px;
+    margin-bottom: 16px;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="predict-hero">
+  <div class="container-sm">
+    <div class="feature-badge">✦ Core Feature</div>
+    <h1 class="display-lg mb-16">Predict your flight.</h1>
+    <p class="body-lg">Fill in the details below and our model will return a delay probability in under 2 seconds.</p>
+  </div>
+</div>
+
+<div class="predict-layout">
+
+  <!-- ── MAIN FORM ──────────────────────────────────────── -->
+  <div class="form-card">
+    <form action="/predict" method="POST" id="predict-form">
+
+      <!-- Flight Identity -->
+      <div class="form-section-title">Flight details</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label" for="flight_no">Flight number</label>
+          <input type="text" id="flight_no" name="flight_no"
+                 placeholder="e.g. AA1004"
+                 class="form-input"
+                 value="{{ prefill.flight_no or '' }}"
+                 required>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="airline">Airline code</label>
+          <select id="airline" name="airline" class="form-select" required>
+            <option value="">Select airline</option>
+            {% for code, name in airlines %}
+              <option value="{{ code }}" {% if prefill.airline == code %}selected{% endif %}>
+                {{ code }} — {{ name }}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <div class="form-divider"></div>
+
+      <!-- Route -->
+      <div class="form-section-title">Route</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label" for="origin">Origin airport</label>
+          <select id="origin" name="origin" class="form-select" required>
+            <option value="">Select origin</option>
+            {% for code, name, city in airports %}
+              <option value="{{ code }}" {% if prefill.origin == code %}selected{% endif %}>
+                {{ code }} — {{ city }}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="destination">Destination airport</label>
+          <select id="destination" name="destination" class="form-select" required>
+            <option value="">Select destination</option>
+            {% for code, name, city in airports %}
+              <option value="{{ code }}" {% if prefill.destination == code %}selected{% endif %}>
+                {{ code }} — {{ city }}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <div class="form-divider"></div>
+
+      <!-- Schedule -->
+      <div class="form-section-title">Schedule</div>
+      <div class="form-row-3">
+        <div class="form-group">
+          <label class="form-label" for="flight_date">Flight date</label>
+          <input type="date" id="flight_date" name="flight_date"
+                 class="form-input"
+                 value="{{ prefill.date or '' }}"
+                 required>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="scheduled_departure">Scheduled departure</label>
+          <input type="time" id="scheduled_departure" name="scheduled_departure"
+                 class="form-input"
+                 value="{{ prefill.scheduled_departure or '' }}"
+                 required>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="distance">Distance (miles)</label>
+          <input type="number" id="distance" name="distance"
+                 placeholder="e.g. 2475"
+                 class="form-input"
+                 value="{{ prefill.distance or '' }}"
+                 min="1" max="9999" required>
+        </div>
+      </div>
+
+      <div class="form-divider"></div>
+
+      <!-- Live departure status -->
+      <div class="form-section-title">Current status (at gate)</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label" for="departure_delay">Departure delay (minutes)</label>
+          <input type="number" id="departure_delay" name="departure_delay"
+                 placeholder="0 if on time"
+                 class="form-input"
+                 value="{{ prefill.departure_delay or 0 }}"
+                 min="-30" max="600">
+          <span class="info-tooltip">ℹ Enter 0 if the flight hasn't departed yet</span>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="scheduled_time">Scheduled flight duration (min)</label>
+          <input type="number" id="scheduled_time" name="scheduled_time"
+                 placeholder="e.g. 315"
+                 class="form-input"
+                 value="{{ prefill.scheduled_time or '' }}"
+                 min="20" max="1000" required>
+        </div>
+      </div>
+
+      <!-- Submit -->
+      <div class="submit-row">
+        <span class="submit-hint">Results appear instantly on the next page</span>
+        <button type="submit" class="btn btn-primary btn-lg" id="submit-btn">
+          <span id="btn-text">Predict delay</span>
+        </button>
+      </div>
+
+    </form>
+  </div>
+
+  <!-- ── SIDEBAR ────────────────────────────────────────── -->
+  <div class="predict-sidebar">
+    <div class="sidebar-card">
+      <div class="sidebar-title">Tips for accuracy</div>
+      <div class="sidebar-tip">
+        <span class="tip-icon">🕐</span>
+        <span>Evening departures (after 18:00) typically have higher delay rates due to cascading delays.</span>
+      </div>
+      <div class="sidebar-tip">
+        <span class="tip-icon">📅</span>
+        <span>July and December have historically the highest delay rates in the US.</span>
+      </div>
+      <div class="sidebar-tip">
+        <span class="tip-icon">✈️</span>
+        <span>If your flight is already delayed at departure, enter the actual delay for a more accurate prediction.</span>
+      </div>
+      <div class="sidebar-tip">
+        <span class="tip-icon">🛣️</span>
+        <span>Shorter routes tend to recover from delays faster than long-haul flights.</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Convert time input to HHMM integer for backend
+  document.getElementById('predict-form').addEventListener('submit', function(e) {
+    const btn = document.getElementById('submit-btn');
+    const text = document.getElementById('btn-text');
+    text.textContent = 'Predicting…';
+    btn.disabled = true;
+  });
+
+  // Auto-fill distance when route is selected (optional enhancement)
+  // Can be wired to a Flask /api/route-distance endpoint later
+</script>
+{% endblock %}

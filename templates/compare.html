@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+{% block title %}Compare Flights — SkyIQ{% endblock %}
+
+{% block head %}
+<style>
+  .compare-page { padding: 56px 0 80px; }
+  .compare-header { padding: 48px 24px 36px; max-width: 1080px; margin: 0 auto; }
+
+  .search-bar {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    padding: 28px 32px;
+    max-width: 860px; margin: 0 auto 40px; padding: 24px 32px;
+  }
+  .search-bar-row {
+    display: grid; grid-template-columns: 1fr 1fr 1fr auto;
+    gap: 12px; align-items: end;
+  }
+  @media(max-width:640px) { .search-bar-row { grid-template-columns: 1fr 1fr; } }
+
+  /* Results */
+  .compare-results { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+  .compare-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 16px;
+  }
+
+  .flight-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 24px;
+    transition: var(--transition);
+    position: relative;
+    overflow: hidden;
+  }
+  .flight-card:hover { border-color: var(--border-light); transform: translateY(-2px); }
+  .flight-card.best-pick {
+    border-color: var(--green);
+    background: linear-gradient(135deg, var(--surface), rgba(48,209,88,0.04));
+  }
+  .best-pick-label {
+    position: absolute; top: 16px; right: 16px;
+    background: var(--green-dim); color: var(--green);
+    font-size: 11px; font-weight: 600;
+    padding: 3px 10px; border-radius: 980px;
+    letter-spacing: 0.04em;
+  }
+
+  .fc-flight {
+    font-family: var(--font-display);
+    font-size: 22px; font-weight: 700;
+    letter-spacing: -0.5px;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+  }
+  .fc-airline { font-size: 13px; color: var(--text-tertiary); margin-bottom: 20px; }
+
+  .fc-prob {
+    font-family: var(--font-display);
+    font-size: 36px; font-weight: 700;
+    letter-spacing: -1px;
+    margin-bottom: 4px;
+  }
+  .fc-prob-label { font-size: 12px; color: var(--text-tertiary); margin-bottom: 16px; }
+
+  .fc-details { border-top: 1px solid var(--border); padding-top: 16px; }
+  .fc-row {
+    display: flex; justify-content: space-between;
+    font-size: 13px; padding: 5px 0;
+  }
+  .fc-key { color: var(--text-tertiary); }
+  .fc-val { color: var(--text-secondary); font-family: var(--font-mono); font-size: 12px; }
+
+  .fc-action { margin-top: 16px; }
+
+  .empty-state {
+    text-align: center; padding: 80px 24px;
+    color: var(--text-tertiary);
+  }
+  .empty-state-icon { font-size: 48px; margin-bottom: 16px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="compare-page">
+  <div class="compare-header">
+    <p class="label mb-8">Compare</p>
+    <h1 class="display-lg">Find the best flight<br>on your route.</h1>
+  </div>
+
+  <!-- Search -->
+  <div style="padding: 0 24px;">
+    <form action="/compare" method="GET" class="search-bar">
+      <div class="search-bar-row">
+        <div class="form-group">
+          <label class="form-label">Origin</label>
+          <select name="origin" class="form-select">
+            <option value="">Select origin</option>
+            {% for code, name, city in airports %}
+              <option value="{{ code }}" {% if request.args.get('origin') == code %}selected{% endif %}>
+                {{ code }} — {{ city }}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Destination</label>
+          <select name="destination" class="form-select">
+            <option value="">Select destination</option>
+            {% for code, name, city in airports %}
+              <option value="{{ code }}" {% if request.args.get('destination') == code %}selected{% endif %}>
+                {{ code }} — {{ city }}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Date</label>
+          <input type="date" name="date" class="form-input"
+                 value="{{ request.args.get('date', '') }}">
+        </div>
+        <button type="submit" class="btn btn-primary">Compare</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Results -->
+  <div class="compare-results">
+    {% if flights %}
+      <p class="label mb-24">{{ flights | length }} flights found — {{ request.args.get('origin') }} → {{ request.args.get('destination') }}</p>
+      <div class="compare-grid">
+        {% for f in flights %}
+        <div class="flight-card fade-up {% if f.is_best %}best-pick{% endif %}">
+          {% if f.is_best %}
+            <div class="best-pick-label">★ Best choice</div>
+          {% endif %}
+          <div class="fc-flight">{{ f.flight_number }}</div>
+          <div class="fc-airline">{{ f.airline_name }}</div>
+          <div class="fc-prob text-{{ 'green' if f.delay_probability < 0.35 else ('amber' if f.delay_probability < 0.65 else 'red') }}">
+            {{ (f.delay_probability * 100) | round(0) | int }}%
+          </div>
+          <div class="fc-prob-label">delay probability</div>
+          <span class="badge badge-{{ 'green' if f.risk_level == 'Low' else ('amber' if f.risk_level == 'Medium' else 'red') }}">
+            {{ f.risk_level }} Risk
+          </span>
+          <div class="fc-details">
+            <div class="fc-row">
+              <span class="fc-key">Departure</span>
+              <span class="fc-val">{{ f.scheduled_departure }}</span>
+            </div>
+            <div class="fc-row">
+              <span class="fc-key">Duration</span>
+              <span class="fc-val">{{ f.scheduled_time }} min</span>
+            </div>
+            <div class="fc-row">
+              <span class="fc-key">On-time rate</span>
+              <span class="fc-val">{{ f.ontime_rate }}%</span>
+            </div>
+          </div>
+          <div class="fc-action">
+            <a href="/predict?flight_no={{ f.flight_number }}&origin={{ f.origin }}&destination={{ f.destination }}&date={{ request.args.get('date') }}"
+               class="btn btn-secondary btn-sm" style="width:100%;justify-content:center;">
+              Full prediction →
+            </a>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="empty-state">
+        <div class="empty-state-icon">✈</div>
+        <h3 class="display-sm mb-12">Search a route above</h3>
+        <p class="body-md">Select an origin, destination and date to compare all available flights.</p>
+      </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

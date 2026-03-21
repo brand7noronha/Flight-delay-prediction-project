@@ -1,0 +1,373 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — SkyIQ{% endblock %}
+
+{% block head %}
+<style>
+  .dashboard-page { padding: 56px 0 80px; }
+
+  .dash-header {
+    padding: 48px 24px 40px;
+    max-width: 1080px; margin: 0 auto;
+    display: flex; align-items: flex-end; justify-content: space-between;
+    flex-wrap: wrap; gap: 20px;
+  }
+
+  /* ── FILTER BAR ──────────────────────────────────────── */
+  .filter-bar {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 16px 24px;
+    display: flex; align-items: center; gap: 14px;
+    flex-wrap: wrap;
+    max-width: 1080px; margin: 0 auto 32px; padding: 16px 24px;
+  }
+  .filter-bar .form-label { white-space: nowrap; margin-bottom: 0; }
+  .filter-select {
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 13px; padding: 7px 12px;
+    min-width: 140px; cursor: pointer;
+  }
+  .filter-select:focus { outline: none; border-color: var(--accent); }
+
+  /* ── STAT TILES ──────────────────────────────────────── */
+  .tiles-row {
+    display: grid;
+    grid-template-columns: repeat(4,1fr);
+    gap: 14px;
+    max-width: 1080px; margin: 0 auto 28px; padding: 0 24px;
+  }
+  @media(max-width:800px) { .tiles-row { grid-template-columns: 1fr 1fr; } }
+
+  .tile {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 22px 24px;
+    transition: var(--transition);
+  }
+  .tile:hover { border-color: var(--border-light); }
+  .tile-label { font-size: 12px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-tertiary); margin-bottom: 10px; }
+  .tile-value {
+    font-family: var(--font-display);
+    font-size: 30px; font-weight: 700;
+    letter-spacing: -1px; color: var(--text-primary);
+  }
+  .tile-sub { font-size: 12px; color: var(--text-tertiary); margin-top: 4px; }
+
+  /* ── CHART GRID ──────────────────────────────────────── */
+  .charts-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    max-width: 1080px; margin: 0 auto; padding: 0 24px;
+  }
+  @media(max-width:700px) { .charts-grid { grid-template-columns: 1fr; } }
+
+  .chart-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 24px;
+  }
+  .chart-title {
+    font-family: var(--font-display);
+    font-size: 15px; font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: -0.3px;
+    margin-bottom: 4px;
+  }
+  .chart-sub { font-size: 12px; color: var(--text-tertiary); margin-bottom: 20px; }
+  .chart-wrap { position: relative; height: 220px; }
+
+  /* Full-width chart card */
+  .chart-card-wide {
+    grid-column: 1 / -1;
+  }
+  .chart-wrap-wide { position: relative; height: 240px; }
+
+  /* ── TOP ROUTES TABLE ────────────────────────────────── */
+  .routes-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+  .routes-table th {
+    text-align: left; padding: 8px 12px;
+    font-size: 11px; font-weight: 500;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--text-tertiary);
+    border-bottom: 1px solid var(--border);
+  }
+  .routes-table td { padding: 11px 12px; border-bottom: 1px solid var(--border); color: var(--text-secondary); }
+  .routes-table tr:last-child td { border-bottom: none; }
+  .routes-table tr:hover td { background: var(--bg-3); }
+  .route-badge {
+    font-family: var(--font-mono); font-size: 12px;
+    color: var(--accent); background: var(--accent-dim);
+    padding: 3px 8px; border-radius: 6px;
+  }
+  .delay-bar {
+    display: flex; align-items: center; gap: 8px;
+  }
+  .delay-bar-track {
+    flex: 1; height: 4px; background: var(--bg-4); border-radius: 2px;
+  }
+  .delay-bar-fill { height: 100%; border-radius: 2px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-page">
+
+  <!-- ── HEADER ─────────────────────────────────────────── -->
+  <div class="dash-header">
+    <div>
+      <p class="label mb-8">Analytics</p>
+      <h1 class="display-lg">Delay Dashboard</h1>
+    </div>
+    <div class="flex gap-12 items-center">
+      <select class="filter-select" id="airline-filter" onchange="updateCharts()">
+        <option value="ALL">All airlines</option>
+        {% for code, name in airlines %}
+          <option value="{{ code }}">{{ code }} — {{ name }}</option>
+        {% endfor %}
+      </select>
+      <select class="filter-select" id="month-filter" onchange="updateCharts()">
+        <option value="0">All months</option>
+        {% for m in range(1,13) %}
+          <option value="{{ m }}">{{ ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m-1] }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+
+  <!-- ── STAT TILES ─────────────────────────────────────── -->
+  <div class="tiles-row">
+    <div class="tile fade-up">
+      <div class="tile-label">Total flights tracked</div>
+      <div class="tile-value">{{ stats.total_flights | default('—') }}</div>
+      <div class="tile-sub">Last 7 days</div>
+    </div>
+    <div class="tile fade-up">
+      <div class="tile-label">Overall delay rate</div>
+      <div class="tile-value text-amber">{{ stats.delay_rate | default('—') }}%</div>
+      <div class="tile-sub">Arrivals &gt; 15 min late</div>
+    </div>
+    <div class="tile fade-up">
+      <div class="tile-label">Avg delay (when late)</div>
+      <div class="tile-value text-red">{{ stats.avg_delay | default('—') }} min</div>
+      <div class="tile-sub">Across all routes</div>
+    </div>
+    <div class="tile fade-up">
+      <div class="tile-label">Model accuracy</div>
+      <div class="tile-value text-green">{{ stats.model_accuracy | default('—') }}%</div>
+      <div class="tile-sub">On recent predictions</div>
+    </div>
+  </div>
+
+  <!-- ── CHARTS GRID ────────────────────────────────────── -->
+  <div class="charts-grid">
+
+    <!-- Chart 1: Delay rate by airline -->
+    <div class="chart-card fade-up">
+      <div class="chart-title">Delay rate by airline</div>
+      <div class="chart-sub">% of flights arriving more than 15 min late</div>
+      <div class="chart-wrap">
+        <canvas id="chart-airline"></canvas>
+      </div>
+    </div>
+
+    <!-- Chart 2: Delay rate by hour -->
+    <div class="chart-card fade-up">
+      <div class="chart-title">Delay rate by departure hour</div>
+      <div class="chart-sub">Evening flights consistently show higher rates</div>
+      <div class="chart-wrap">
+        <canvas id="chart-hour"></canvas>
+      </div>
+    </div>
+
+    <!-- Chart 3: Delay rate by month (full width) -->
+    <div class="chart-card chart-card-wide fade-up">
+      <div class="chart-title">Monthly delay trends</div>
+      <div class="chart-sub">Seasonal patterns across January — December</div>
+      <div class="chart-wrap-wide">
+        <canvas id="chart-month"></canvas>
+      </div>
+    </div>
+
+    <!-- Chart 4: Delay by day of week -->
+    <div class="chart-card fade-up">
+      <div class="chart-title">Delay rate by day of week</div>
+      <div class="chart-sub">Friday and Monday tend to be worst</div>
+      <div class="chart-wrap">
+        <canvas id="chart-day"></canvas>
+      </div>
+    </div>
+
+    <!-- Top routes table -->
+    <div class="chart-card fade-up">
+      <div class="chart-title">Top 10 delayed routes</div>
+      <div class="chart-sub">Routes with highest historical delay rate</div>
+      <table class="routes-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Route</th>
+            <th>Delay rate</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for route in top_routes %}
+          <tr>
+            <td class="text-dim">{{ loop.index }}</td>
+            <td><span class="route-badge">{{ route.origin }}→{{ route.destination }}</span></td>
+            <td>
+              <div class="delay-bar">
+                <div class="delay-bar-track">
+                  <div class="delay-bar-fill"
+                       style="width:{{ route.delay_rate }}%;
+                              background: {% if route.delay_rate > 60 %}var(--red){% elif route.delay_rate > 40 %}var(--amber){% else %}var(--green){% endif %}">
+                  </div>
+                </div>
+                <span style="font-size:12px;color:var(--text-secondary);min-width:36px;">{{ route.delay_rate }}%</span>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // ── CHART DEFAULTS ────────────────────────────────────
+  Chart.defaults.color = '#a1a1a6';
+  Chart.defaults.font.family = "'DM Sans', sans-serif";
+  Chart.defaults.font.size = 12;
+
+  const gridColor = 'rgba(255,255,255,0.06)';
+  const accent    = '#2997ff';
+  const green     = '#30d158';
+  const amber     = '#ffd60a';
+  const red       = '#ff453a';
+
+  // Data injected from Flask
+  const data = {
+    airline: {{ chart_data.airline | tojson }},
+    hour:    {{ chart_data.hour    | tojson }},
+    month:   {{ chart_data.month   | tojson }},
+    day:     {{ chart_data.day     | tojson }},
+  };
+
+  // ── AIRLINE CHART ─────────────────────────────────────
+  new Chart(document.getElementById('chart-airline'), {
+    type: 'bar',
+    data: {
+      labels: data.airline.labels,
+      datasets: [{
+        label: 'Delay rate %',
+        data: data.airline.values,
+        backgroundColor: data.airline.values.map(v =>
+          v > 50 ? 'rgba(255,69,58,0.7)' : v > 35 ? 'rgba(255,214,10,0.7)' : 'rgba(48,209,88,0.7)'
+        ),
+        borderRadius: 6,
+        borderSkipped: false,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { color: gridColor }, ticks: { color: '#6e6e73' } },
+        y: { grid: { color: gridColor }, ticks: { color: '#6e6e73', callback: v => v+'%' }, max: 100 }
+      }
+    }
+  });
+
+  // ── HOUR CHART ────────────────────────────────────────
+  new Chart(document.getElementById('chart-hour'), {
+    type: 'line',
+    data: {
+      labels: data.hour.labels,
+      datasets: [{
+        label: 'Delay rate %',
+        data: data.hour.values,
+        borderColor: accent,
+        backgroundColor: 'rgba(41,151,255,0.08)',
+        borderWidth: 2,
+        pointRadius: 3,
+        pointBackgroundColor: accent,
+        fill: true,
+        tension: 0.4,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { color: gridColor }, ticks: { color: '#6e6e73' } },
+        y: { grid: { color: gridColor }, ticks: { color: '#6e6e73', callback: v => v+'%' } }
+      }
+    }
+  });
+
+  // ── MONTH CHART ───────────────────────────────────────
+  new Chart(document.getElementById('chart-month'), {
+    type: 'bar',
+    data: {
+      labels: data.month.labels,
+      datasets: [{
+        label: 'Delay rate %',
+        data: data.month.values,
+        backgroundColor: 'rgba(41,151,255,0.6)',
+        borderRadius: 6,
+        borderSkipped: false,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { color: gridColor }, ticks: { color: '#6e6e73' } },
+        y: { grid: { color: gridColor }, ticks: { color: '#6e6e73', callback: v => v+'%' } }
+      }
+    }
+  });
+
+  // ── DAY CHART ─────────────────────────────────────────
+  new Chart(document.getElementById('chart-day'), {
+    type: 'bar',
+    data: {
+      labels: data.day.labels,
+      datasets: [{
+        label: 'Delay rate %',
+        data: data.day.values,
+        backgroundColor: data.day.values.map(v =>
+          v === Math.max(...data.day.values) ? 'rgba(255,69,58,0.7)' : 'rgba(41,151,255,0.5)'
+        ),
+        borderRadius: 6,
+        borderSkipped: false,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { color: gridColor }, ticks: { color: '#6e6e73' } },
+        y: { grid: { color: gridColor }, ticks: { color: '#6e6e73', callback: v => v+'%' } }
+      }
+    }
+  });
+
+  function updateCharts() {
+    // Wire to /api/analytics?airline=XX&month=YY for dynamic filtering
+    const airline = document.getElementById('airline-filter').value;
+    const month   = document.getElementById('month-filter').value;
+    window.location.href = `/dashboard?airline=${airline}&month=${month}`;
+  }
+</script>
+{% endblock %}

@@ -1,4 +1,374 @@
-<!doctype html>
+{% extends "base.html" %}
+{% block title %}SkyIQ — Know Before You Fly{% endblock %}
+
+{% block head %}
+<style>
+  /* ── HERO ─────────────────────────────────────────────── */
+  .hero {
+    min-height: 100vh;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    text-align: center;
+    padding: 80px 24px 60px;
+    position: relative;
+    overflow: hidden;
+  }
+  .hero-glow {
+    position: absolute; top: 20%; left: 50%;
+    transform: translateX(-50%);
+    width: 600px; height: 400px;
+    background: radial-gradient(ellipse, rgba(41,151,255,0.12) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .hero-eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--accent-dim);
+    border: 1px solid rgba(41,151,255,0.25);
+    border-radius: 980px;
+    padding: 6px 14px;
+    font-size: 12px; font-weight: 500;
+    color: var(--accent);
+    letter-spacing: 0.04em;
+    margin-bottom: 28px;
+    animation: fadeDown 0.6s ease forwards;
+  }
+  .hero-title {
+    font-family: var(--font-display);
+    font-size: clamp(52px, 8vw, 88px);
+    font-weight: 700;
+    letter-spacing: -3px;
+    line-height: 1.02;
+    color: var(--text-primary);
+    animation: fadeDown 0.6s 0.1s ease both;
+  }
+  .hero-title .gradient-text {
+    background: linear-gradient(135deg, #2997ff 0%, #40c8e0 50%, #2997ff 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    background-size: 200%;
+    animation: shimmer 3s linear infinite;
+  }
+  @keyframes shimmer {
+    0% { background-position: 0% 50%; }
+    100% { background-position: 200% 50%; }
+  }
+  .hero-sub {
+    font-size: clamp(17px, 2vw, 21px);
+    color: var(--text-secondary);
+    max-width: 560px;
+    margin: 20px auto 0;
+    line-height: 1.6;
+    font-weight: 300;
+    animation: fadeDown 0.6s 0.2s ease both;
+  }
+  .hero-actions {
+    display: flex; align-items: center; gap: 12px;
+    margin-top: 36px; flex-wrap: wrap; justify-content: center;
+    animation: fadeDown 0.6s 0.3s ease both;
+  }
+
+  /* ── QUICK SEARCH ─────────────────────────────────────── */
+  .quick-search {
+    margin-top: 56px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    padding: 28px 32px;
+    max-width: 700px; width: 100%;
+    animation: fadeDown 0.7s 0.4s ease both;
+  }
+  .quick-search-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr auto;
+    gap: 10px; align-items: end;
+  }
+  @media(max-width:640px) {
+    .quick-search-row { grid-template-columns: 1fr 1fr; }
+    .quick-search-row .btn { grid-column: 1/-1; }
+  }
+
+  /* ── STATS ROW ────────────────────────────────────────── */
+  .stats-row {
+    display: grid; grid-template-columns: repeat(3,1fr);
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    max-width: 700px; width: 100%;
+    margin-top: 24px;
+    animation: fadeDown 0.7s 0.5s ease both;
+  }
+  .stat-cell {
+    background: var(--surface);
+    padding: 20px 24px;
+    text-align: center;
+  }
+  .stat-number {
+    font-family: var(--font-display);
+    font-size: 28px; font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: -1px;
+  }
+  .stat-label { font-size: 12px; color: var(--text-tertiary); margin-top: 4px; }
+
+  /* ── FEATURES SECTION ─────────────────────────────────── */
+  .section { padding: 100px 0; }
+  .section-header { text-align: center; margin-bottom: 56px; }
+
+  .features-grid {
+    display: grid;
+    grid-template-columns: repeat(3,1fr);
+    gap: 16px;
+  }
+  @media(max-width:900px) { .features-grid { grid-template-columns: 1fr 1fr; } }
+  @media(max-width:600px) { .features-grid { grid-template-columns: 1fr; } }
+
+  .feature-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 28px;
+    transition: var(--transition);
+    position: relative;
+    overflow: hidden;
+  }
+  .feature-card::before {
+    content: '';
+    position: absolute; top: 0; left: 0; right: 0; height: 1px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    opacity: 0; transition: var(--transition);
+  }
+  .feature-card:hover { border-color: var(--border-light); transform: translateY(-2px); }
+  .feature-card:hover::before { opacity: 1; }
+
+  .feature-icon {
+    width: 44px; height: 44px;
+    background: var(--accent-dim);
+    border-radius: var(--radius-md);
+    display: flex; align-items: center; justify-content: center;
+    margin-bottom: 20px;
+    font-size: 20px;
+  }
+  .feature-title {
+    font-family: var(--font-display);
+    font-size: 17px; font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: -0.3px;
+    margin-bottom: 10px;
+  }
+  .feature-desc { font-size: 14px; color: var(--text-secondary); line-height: 1.65; }
+
+  /* ── HOW IT WORKS ─────────────────────────────────────── */
+  .steps-row {
+    display: grid; grid-template-columns: 1fr 1fr 1fr;
+    gap: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    overflow: hidden;
+  }
+  @media(max-width:700px) { .steps-row { grid-template-columns: 1fr; } }
+  .step {
+    padding: 36px 32px;
+    border-right: 1px solid var(--border);
+    position: relative;
+  }
+  .step:last-child { border-right: none; }
+  .step-num {
+    font-family: var(--font-display);
+    font-size: 48px; font-weight: 700;
+    color: var(--border-light);
+    line-height: 1;
+    margin-bottom: 16px;
+    letter-spacing: -2px;
+  }
+  .step-title {
+    font-family: var(--font-display);
+    font-size: 18px; font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: -0.4px;
+    margin-bottom: 10px;
+  }
+  .step-desc { font-size: 14px; color: var(--text-secondary); line-height: 1.65; }
+
+  /* ── CTA BAND ─────────────────────────────────────────── */
+  .cta-band {
+    background: linear-gradient(135deg, var(--bg-2) 0%, var(--bg-3) 100%);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    padding: 64px 48px;
+    text-align: center;
+    margin-bottom: 80px;
+    position: relative; overflow: hidden;
+  }
+  .cta-band::before {
+    content: '';
+    position: absolute; top: -80px; right: -80px;
+    width: 320px; height: 320px;
+    background: radial-gradient(circle, rgba(41,151,255,0.08), transparent 70%);
+    pointer-events: none;
+  }
+
+  @keyframes fadeDown {
+    from { opacity: 0; transform: translateY(-16px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- ── HERO ──────────────────────────────────────────────── -->
+<section class="hero">
+  <div class="hero-glow"></div>
+
+  <div class="hero-eyebrow">
+    ✦ ML-powered flight intelligence
+  </div>
+
+  <h1 class="hero-title">
+    Know before<br>
+    you <span class="gradient-text">fly.</span>
+  </h1>
+
+  <p class="hero-sub">
+    Predict flight delays with machine learning. Real data, real accuracy.
+    Stop guessing at the gate.
+  </p>
+
+  <div class="hero-actions">
+    <a href="/predict" class="btn btn-primary btn-lg">Check my flight</a>
+    <a href="/dashboard" class="btn btn-secondary btn-lg">View analytics</a>
+  </div>
+
+  <!-- Quick Search -->
+  <div class="quick-search">
+    <p class="label mb-16">Quick prediction</p>
+    <form action="/predict" method="GET">
+      <div class="quick-search-row">
+        <div class="form-group">
+          <label class="form-label">Flight number</label>
+          <input type="text" name="flight_no" placeholder="AA1004" class="form-input">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Origin</label>
+          <input type="text" name="origin" placeholder="LAX" class="form-input">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Date</label>
+          <input type="date" name="date" class="form-input">
+        </div>
+        <button type="submit" class="btn btn-primary">Go</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Stats -->
+  <div class="stats-row">
+    <div class="stat-cell">
+      <div class="stat-number">78%+</div>
+      <div class="stat-label">Model accuracy</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-number">5.8M</div>
+      <div class="stat-label">Flights trained on</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-number">&lt;2s</div>
+      <div class="stat-label">Prediction time</div>
+    </div>
+  </div>
+</section>
+
+<!-- ── FEATURES ──────────────────────────────────────────── -->
+<section class="section">
+  <div class="container">
+    <div class="section-header fade-up">
+      <p class="label mb-12">What SkyIQ does</p>
+      <h2 class="display-lg">Everything you need<br>to plan smarter.</h2>
+    </div>
+
+    <div class="features-grid">
+      <div class="feature-card fade-up">
+        <div class="feature-icon">🎯</div>
+        <div class="feature-title">Delay Prediction</div>
+        <p class="feature-desc">Enter a flight number and get instant delay probability with Low, Medium, or High risk classification.</p>
+      </div>
+      <div class="feature-card fade-up">
+        <div class="feature-icon">📊</div>
+        <div class="feature-title">Analytics Dashboard</div>
+        <p class="feature-desc">Explore historical delay patterns by airline, hour, month, and route. Interactive Chart.js visualizations.</p>
+      </div>
+      <div class="feature-card fade-up">
+        <div class="feature-icon">⚖️</div>
+        <div class="feature-title">Flight Comparison</div>
+        <p class="feature-desc">Compare multiple flights on the same route side-by-side. Find the least likely to be delayed.</p>
+      </div>
+      <div class="feature-card fade-up">
+        <div class="feature-icon">🔍</div>
+        <div class="feature-title">Search History</div>
+        <p class="feature-desc">Every search you make is saved to your profile. Re-run past predictions instantly.</p>
+      </div>
+      <div class="feature-card fade-up">
+        <div class="feature-icon">⚡</div>
+        <div class="feature-title">Live Data Ingestion</div>
+        <p class="feature-desc">Search a new flight and our system automatically fetches and stores its data for future predictions.</p>
+      </div>
+      <div class="feature-card fade-up">
+        <div class="feature-icon">🧠</div>
+        <div class="feature-title">LightGBM Model</div>
+        <p class="feature-desc">Trained on 300,000 stratified flight records. Feature-engineered with departure hour, route, and season.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── HOW IT WORKS ──────────────────────────────────────── -->
+<section class="section" style="padding-top:0">
+  <div class="container">
+    <div class="section-header fade-up">
+      <p class="label mb-12">How it works</p>
+      <h2 class="display-lg">Three steps.<br>One answer.</h2>
+    </div>
+    <div class="steps-row fade-up">
+      <div class="step">
+        <div class="step-num">01</div>
+        <div class="step-title">Enter flight details</div>
+        <p class="step-desc">Provide the flight number, route, date, and scheduled departure time.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">02</div>
+        <div class="step-title">Model runs</div>
+        <p class="step-desc">Our LightGBM model processes 9 features and returns a delay probability in under 2 seconds.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">03</div>
+        <div class="step-title">Plan accordingly</div>
+        <p class="step-desc">Get a clear Low / Medium / High risk verdict and historical context for that flight.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── CTA BAND ──────────────────────────────────────────── -->
+<section style="padding: 0 24px 80px;">
+  <div class="container">
+    <div class="cta-band fade-up">
+      <p class="label mb-16">Ready to start?</p>
+      <h2 class="display-md mb-16">Check your next flight now.</h2>
+      <p class="body-md mb-24" style="max-width:420px;margin-left:auto;margin-right:auto;">
+        Free to use. No credit card. Just a smarter way to plan your travel.
+      </p>
+      <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
+        <a href="/login?tab=register" class="btn btn-primary btn-lg">Create free account</a>
+        <a href="/predict" class="btn btn-secondary btn-lg">Try without signing in</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+{% endblock %}<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />

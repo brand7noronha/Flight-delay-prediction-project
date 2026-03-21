@@ -1,0 +1,307 @@
+{% extends "base.html" %}
+{% block title %}Result — {{ result.flight_number }} — SkyIQ{% endblock %}
+
+{% block head %}
+<style>
+  .result-page { padding: 56px 0 80px; }
+
+  /* ── BIG VERDICT ─────────────────────────────────────── */
+  .verdict-hero {
+    text-align: center;
+    padding: 48px 24px 40px;
+    position: relative;
+  }
+  .verdict-ring {
+    width: 160px; height: 160px;
+    margin: 0 auto 28px;
+    position: relative;
+  }
+  .verdict-ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+  .ring-bg    { fill: none; stroke: var(--bg-3); stroke-width: 8; }
+  .ring-fill  { fill: none; stroke-width: 8; stroke-linecap: round;
+                stroke-dasharray: 408; transition: stroke-dashoffset 1.4s cubic-bezier(0.4,0,0.2,1); }
+  .ring-fill.green  { stroke: var(--green); }
+  .ring-fill.amber  { stroke: var(--amber); }
+  .ring-fill.red    { stroke: var(--red); }
+  .verdict-pct {
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%,-50%);
+    font-family: var(--font-display);
+    font-size: 32px; font-weight: 700;
+    letter-spacing: -1px;
+    color: var(--text-primary);
+  }
+  .verdict-pct span { font-size: 14px; font-weight: 400; color: var(--text-tertiary); }
+
+  .verdict-label {
+    font-family: var(--font-display);
+    font-size: 36px; font-weight: 700;
+    letter-spacing: -1px;
+    margin-bottom: 10px;
+  }
+  .verdict-label.on-time  { color: var(--green); }
+  .verdict-label.delayed  { color: var(--red); }
+
+  .verdict-message { font-size: 16px; color: var(--text-secondary); max-width: 400px; margin: 0 auto; }
+
+  /* ── DETAIL CARDS ────────────────────────────────────── */
+  .result-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    max-width: 860px; margin: 40px auto 0; padding: 0 24px;
+  }
+  @media(max-width:640px) { .result-grid { grid-template-columns: 1fr; } }
+
+  .result-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 24px;
+  }
+  .result-card-title {
+    font-size: 12px; font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .detail-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 14px;
+  }
+  .detail-row:last-child { border-bottom: none; }
+  .detail-key { color: var(--text-secondary); }
+  .detail-val { color: var(--text-primary); font-weight: 500; font-family: var(--font-mono); font-size: 13px; }
+
+  /* ── HISTORICAL STATS ────────────────────────────────── */
+  .hist-stats {
+    display: grid; grid-template-columns: 1fr 1fr 1fr;
+    gap: 12px; margin-top: 14px;
+  }
+  .hist-stat {
+    background: var(--bg-3);
+    border-radius: var(--radius-md);
+    padding: 14px; text-align: center;
+  }
+  .hist-stat-num {
+    font-family: var(--font-display);
+    font-size: 22px; font-weight: 700;
+    letter-spacing: -0.8px;
+    color: var(--text-primary);
+  }
+  .hist-stat-label { font-size: 11px; color: var(--text-tertiary); margin-top: 3px; }
+
+  /* ── RISK BADGE LARGE ────────────────────────────────── */
+  .risk-badge-lg {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 15px; font-weight: 600;
+    padding: 10px 20px;
+    border-radius: 980px;
+    margin-top: 16px;
+  }
+
+  /* ── FEEDBACK FORM ───────────────────────────────────── */
+  .feedback-card {
+    max-width: 860px; margin: 24px auto 0; padding: 0 24px;
+  }
+  .feedback-inner {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 24px;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; flex-wrap: wrap;
+  }
+  .feedback-question { font-size: 14px; color: var(--text-secondary); }
+  .feedback-question strong { color: var(--text-primary); }
+  .feedback-btns { display: flex; gap: 8px; }
+
+  /* ── ACTIONS ─────────────────────────────────────────── */
+  .result-actions {
+    display: flex; gap: 12px; justify-content: center;
+    flex-wrap: wrap;
+    max-width: 860px; margin: 32px auto 0; padding: 0 24px;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="result-page">
+
+  <!-- ── VERDICT HERO ──────────────────────────────────── -->
+  <div class="verdict-hero fade-up">
+
+    <div class="verdict-ring">
+      <svg viewBox="0 0 136 136">
+        <circle class="ring-bg" cx="68" cy="68" r="65"/>
+        <circle class="ring-fill {{ 'red' if result.is_delayed else 'green' }}"
+                cx="68" cy="68" r="65"
+                id="ring-arc"
+                stroke-dashoffset="408"/>
+      </svg>
+      <div class="verdict-pct">
+        {{ (result.delay_probability * 100) | round(0) | int }}%<br>
+        <span>delay prob.</span>
+      </div>
+    </div>
+
+    <div class="verdict-label {{ 'delayed' if result.is_delayed else 'on-time' }}">
+      {% if result.is_delayed %}⚠ Likely Delayed{% else %}✓ Likely On Time{% endif %}
+    </div>
+
+    <p class="verdict-message">{{ result.message }}</p>
+
+    <div class="risk-badge-lg
+      {% if result.risk_level == 'Low' %}badge-green
+      {% elif result.risk_level == 'Medium' %}badge-amber
+      {% else %}badge-red{% endif %}">
+      {% if result.risk_level == 'Low' %}● Low Risk
+      {% elif result.risk_level == 'Medium' %}● Medium Risk
+      {% else %}● High Risk{% endif %}
+    </div>
+  </div>
+
+  <!-- ── DETAIL CARDS ───────────────────────────────────── -->
+  <div class="result-grid">
+
+    <!-- Flight info -->
+    <div class="result-card fade-up">
+      <div class="result-card-title">Flight details</div>
+      <div class="detail-row">
+        <span class="detail-key">Flight</span>
+        <span class="detail-val">{{ result.flight_number }}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-key">Airline</span>
+        <span class="detail-val">{{ result.airline }}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-key">Route</span>
+        <span class="detail-val">{{ result.origin }} → {{ result.destination }}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-key">Date</span>
+        <span class="detail-val">{{ result.flight_date }}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-key">Scheduled dep.</span>
+        <span class="detail-val">{{ result.scheduled_departure }}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-key">Distance</span>
+        <span class="detail-val">{{ result.distance }} mi</span>
+      </div>
+    </div>
+
+    <!-- Model output -->
+    <div class="result-card fade-up">
+      <div class="result-card-title">Model output</div>
+      <div class="detail-row">
+        <span class="detail-key">Delay probability</span>
+        <span class="detail-val text-{{ 'red' if result.is_delayed else 'green' }}">
+          {{ (result.delay_probability * 100) | round(1) }}%
+        </span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-key">Risk level</span>
+        <span class="detail-val">{{ result.risk_level }}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-key">Departure delay</span>
+        <span class="detail-val">{{ result.departure_delay }} min</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-key">Departure hour</span>
+        <span class="detail-val">{{ result.departure_hour }}:00</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-key">Time period</span>
+        <span class="detail-val">{{ result.time_period | title }}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-key">Model used</span>
+        <span class="detail-val">{{ result.model_name }}</span>
+      </div>
+    </div>
+
+    <!-- Historical stats (full width) -->
+    {% if result.history %}
+    <div class="result-card fade-up" style="grid-column: 1/-1;">
+      <div class="result-card-title">Historical performance — {{ result.flight_number }}</div>
+      <div class="hist-stats">
+        <div class="hist-stat">
+          <div class="hist-stat-num">{{ result.history.total_flights }}</div>
+          <div class="hist-stat-label">Flights (last 7 days)</div>
+        </div>
+        <div class="hist-stat">
+          <div class="hist-stat-num text-green">{{ result.history.total_on_time }}</div>
+          <div class="hist-stat-label">On time</div>
+        </div>
+        <div class="hist-stat">
+          <div class="hist-stat-num text-red">{{ result.history.total_delayed }}</div>
+          <div class="hist-stat-label">Delayed</div>
+        </div>
+      </div>
+      <div class="detail-row mt-16">
+        <span class="detail-key">Historical delay rate</span>
+        <span class="detail-val">{{ (result.history.delay_rate * 100) | round(1) }}%</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-key">Avg delay (when late)</span>
+        <span class="detail-val">{{ result.history.avg_delay_minutes | round(0) | int }} min</span>
+      </div>
+    </div>
+    {% endif %}
+
+  </div>
+
+  <!-- ── FEEDBACK ───────────────────────────────────────── -->
+  {% if session.user_id %}
+  <div class="feedback-card fade-up">
+    <div class="feedback-inner">
+      <div class="feedback-question">
+        <strong>After your flight:</strong> Was {{ result.flight_number }} actually delayed?
+      </div>
+      <div class="feedback-btns">
+        <form action="/feedback" method="POST" style="display:inline;">
+          <input type="hidden" name="prediction_id" value="{{ result.prediction_id }}">
+          <input type="hidden" name="actual_delayed" value="0">
+          <button type="submit" class="btn btn-sm btn-secondary">No, on time ✓</button>
+        </form>
+        <form action="/feedback" method="POST" style="display:inline;">
+          <input type="hidden" name="prediction_id" value="{{ result.prediction_id }}">
+          <input type="hidden" name="actual_delayed" value="1">
+          <button type="submit" class="btn btn-sm" style="background:var(--red-dim);color:var(--red);">Yes, delayed ✗</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- ── ACTIONS ───────────────────────────────────────── -->
+  <div class="result-actions fade-up">
+    <a href="/predict" class="btn btn-primary">Check another flight</a>
+    <a href="/compare?origin={{ result.origin }}&destination={{ result.destination }}&date={{ result.flight_date }}" class="btn btn-secondary">Compare flights on this route</a>
+    <a href="/dashboard" class="btn btn-ghost">View analytics</a>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Animate the probability ring on page load
+  const prob = {{ result.delay_probability }};
+  const circumference = 408;
+  const offset = circumference * (1 - prob);
+  setTimeout(() => {
+    document.getElementById('ring-arc').style.strokeDashoffset = offset;
+  }, 200);
+</script>
+
+{% endblock %}

@@ -1,2 +1,7 @@
 __pycache__/
 .venv/
+*.pyc
+*.pkl
+database/flights.db
+.env
+*.zip
