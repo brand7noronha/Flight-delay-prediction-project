@@ -1,55 +1,126 @@
 """
-app.py — SkyIQ Flask Backend (Frontend-Only Mode)
+app.py — SkyIQ Flask Backend
 Flight Delay Prediction System
 MCA Group 3 — Apa Mestry (2512) & Brandon Noronha (2514)
 
-FRONTEND MODE — No ML, no numpy, no pandas, no sklearn.
-All predictions return realistic mock data so every page is fully testable.
-Plug in the real model later by replacing the mock_predict() function.
-
-Install (only 2 packages needed!):
-    pip install flask requests
+Install:
+    pip install flask pymysql joblib scikit-learn lightgbm pandas numpy
+    python init_db_mysql.py
     python app.py
-
-Open: http://localhost:5000
 """
 
 from flask import (Flask, render_template, request, redirect,
                    url_for, session, flash, jsonify)
-import sqlite3, hashlib, os, random
+import hashlib, os, random
 from datetime import datetime, date
 
+# ── CONFIG & DB ────────────────────────────────────────────
+from config import SECRET_KEY, DEBUG, PORT
+from db import get_db, query, query_one, execute, commit, close
+
 app = Flask(__name__)
-app.secret_key = 'skyiq-secret-change-in-production'
+app.secret_key = SECRET_KEY
 
-# ── PATHS ──────────────────────────────────────────────────
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH  = os.path.join(BASE_DIR, 'database', 'flights.db')
 
 # ══════════════════════════════════════════════════════════
-# MOCK PREDICTION
-# Replace this entire function later with real model
+# ML MODEL LOADING
 # ══════════════════════════════════════════════════════════
-def mock_predict(airline, origin, destination, month,
-                 day_of_week, scheduled_departure_hhmm,
-                 departure_delay, distance, scheduled_time):
+BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
+MODEL_DIR  = os.path.join(BASE_DIR, 'model')
+
+ML_READY   = False   # flips to True if all .pkl files load successfully
+model      = None
+encoder    = None
+FEATURES   = None
+CAT_COLS   = None
+MODEL_NAME = 'Mock'
+
+try:
+    import joblib
+    import pandas as pd
+
+    model      = joblib.load(os.path.join(MODEL_DIR, 'flight_delay_model_best.pkl'))
+    encoder    = joblib.load(os.path.join(MODEL_DIR, 'feature_encoder.pkl'))
+    FEATURES   = joblib.load(os.path.join(MODEL_DIR, 'feature_names.pkl'))
+    CAT_COLS   = joblib.load(os.path.join(MODEL_DIR, 'cat_cols.pkl'))
+    MODEL_NAME = type(model).__name__
+    ML_READY   = True
+    print(f"✅ ML model loaded: {MODEL_NAME}")
+
+except FileNotFoundError:
+    print("⚠️  model/ folder not found — running in Mock mode")
+    print("   Place .pkl files in the model/ folder to enable real predictions")
+except ImportError as e:
+    print(f"⚠️  Missing package: {e} — running in Mock mode")
+    print("   Run: pip install joblib scikit-learn lightgbm pandas numpy")
+except Exception as e:
+    print(f"⚠️  Model load error: {e} — running in Mock mode")
+
+
+# ══════════════════════════════════════════════════════════
+# PREDICTION FUNCTION
+# Uses real model if loaded, falls back to mock automatically
+# ══════════════════════════════════════════════════════════
+def predict_delay(airline, origin, destination, month,
+                  day_of_week, scheduled_departure_hhmm,
+                  departure_delay, distance, scheduled_time):
+    """
+    Main prediction function.
+    Returns real ML prediction if model is loaded,
+    otherwise returns mock prediction seamlessly.
+    """
     dep_hour = int(str(scheduled_departure_hhmm).zfill(4)[:2]) if scheduled_departure_hhmm else 12
-
-    base_prob = 0.28
-    if dep_hour >= 18:              base_prob += 0.20
-    if dep_hour >= 21:              base_prob += 0.10
-    if float(departure_delay) > 0:  base_prob += 0.25
-    if month in [7, 12, 1]:        base_prob += 0.10
-    if day_of_week in [5, 1]:      base_prob += 0.05
-
-    prob = round(min(max(base_prob + random.uniform(-0.05, 0.05), 0.05), 0.95), 4)
-    pred = prob >= 0.5
-    risk = 'Low' if prob < 0.35 else ('Medium' if prob < 0.65 else 'High')
 
     if dep_hour < 6:    time_period = 'late_night'
     elif dep_hour < 12: time_period = 'morning'
     elif dep_hour < 18: time_period = 'afternoon'
     else:               time_period = 'evening'
+
+    # ── REAL MODEL PATH ────────────────────────────────────
+    if ML_READY:
+        try:
+            row = pd.DataFrame([{
+                'AIRLINE':             str(airline),
+                'ORIGIN_AIRPORT':      str(origin),
+                'DESTINATION_AIRPORT': str(destination),
+                'MONTH':               int(month),
+                'DAY_OF_WEEK':         int(day_of_week),
+                'DEPARTURE_HOUR':      int(dep_hour),
+                'DEPARTURE_DELAY':     float(departure_delay),
+                'DISTANCE':            float(distance),
+                'SCHEDULED_TIME':      float(scheduled_time),
+                'TIME_PERIOD':         time_period
+            }])
+            row[CAT_COLS] = encoder.transform(row[CAT_COLS].astype(str))
+            prob = round(float(model.predict_proba(row)[0][1]), 4)
+            pred = prob >= 0.5
+            risk = 'Low' if prob < 0.35 else ('Medium' if prob < 0.65 else 'High')
+            return {
+                'is_delayed':        pred,
+                'delay_probability': prob,
+                'risk_level':        risk,
+                'departure_hour':    dep_hour,
+                'time_period':       time_period,
+                'model_name':        MODEL_NAME,
+                'message': (
+                    f"{'Likely DELAYED' if pred else 'Likely ON TIME'} "
+                    f"— {round(prob * 100, 1)}% delay probability ({risk} Risk)"
+                )
+            }
+        except Exception as e:
+            print(f"⚠️  Prediction error: {e} — falling back to mock")
+
+    # ── MOCK FALLBACK PATH ─────────────────────────────────
+    base_prob = 0.28
+    if dep_hour >= 18:             base_prob += 0.20
+    if dep_hour >= 21:             base_prob += 0.10
+    if float(departure_delay) > 0: base_prob += 0.25
+    if month in [7, 12, 1]:       base_prob += 0.10
+    if day_of_week in [5, 1]:     base_prob += 0.05
+
+    prob = round(min(max(base_prob + random.uniform(-0.05, 0.05), 0.05), 0.95), 4)
+    pred = prob >= 0.5
+    risk = 'Low' if prob < 0.35 else ('Medium' if prob < 0.65 else 'High')
 
     return {
         'is_delayed':        pred,
@@ -57,21 +128,21 @@ def mock_predict(airline, origin, destination, month,
         'risk_level':        risk,
         'departure_hour':    dep_hour,
         'time_period':       time_period,
-        'model_name':        'Mock (ML coming soon)',
+        'model_name':        'Mock (model/ folder not found)',
         'message': (
             f"{'Likely DELAYED' if pred else 'Likely ON TIME'} "
-            f"— {round(prob*100,1)}% delay probability ({risk} Risk)"
+            f"— {round(prob * 100, 1)}% delay probability ({risk} Risk)"
         )
     }
 
 
 # ── PASSWORD HELPERS ────────────────────────────────────────
-def hash_password(password: str) -> str:
+def hash_password(password):
     salt   = os.urandom(16).hex()
     hashed = hashlib.sha256((salt + password).encode()).hexdigest()
     return f"{salt}:{hashed}"
 
-def check_password(password: str, stored: str) -> bool:
+def check_password(password, stored):
     try:
         salt, hashed = stored.split(':', 1)
         return hashlib.sha256((salt + password).encode()).hexdigest() == hashed
@@ -79,73 +150,90 @@ def check_password(password: str, stored: str) -> bool:
         return False
 
 
-# ── DB HELPER ───────────────────────────────────────────────
-def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+# ── DATE HELPER ─────────────────────────────────────────────
+def format_date(value):
+    """
+    Safely format a date/datetime whether it comes as
+    a Python datetime object or a MySQL string.
+    Returns e.g. 'Jan 2024'
+    """
+    if not value:
+        return 'N/A'
+    if isinstance(value, str):
+        # MySQL returns '2024-01-15 10:30:00' or '2024-01-15'
+        try:
+            value = datetime.strptime(value[:19], '%Y-%m-%d %H:%M:%S')
+        except Exception:
+            try:
+                value = datetime.strptime(value[:10], '%Y-%m-%d')
+            except Exception:
+                return str(value)[:7]
+    return value.strftime('%b %Y')
+
+# Register as Jinja filter so templates can use {{ value | fmtdate }}
+app.jinja_env.filters['fmtdate'] = format_date
 
 
-# ── MOCK LOOKUP DATA ────────────────────────────────────────
+# ── MOCK FALLBACK DATA ──────────────────────────────────────
 MOCK_AIRLINES = [
-    ('AA', 'American Airlines'),   ('DL', 'Delta Air Lines'),
-    ('UA', 'United Airlines'),     ('WN', 'Southwest Airlines'),
-    ('B6', 'JetBlue Airways'),     ('AS', 'Alaska Airlines'),
-    ('NK', 'Spirit Airlines'),     ('F9', 'Frontier Airlines'),
-    ('HA', 'Hawaiian Airlines'),   ('VX', 'Virgin America'),
+    ('AA', 'American Airlines'),  ('DL', 'Delta Air Lines'),
+    ('UA', 'United Airlines'),    ('WN', 'Southwest Airlines'),
+    ('B6', 'JetBlue Airways'),    ('AS', 'Alaska Airlines'),
+    ('NK', 'Spirit Airlines'),    ('F9', 'Frontier Airlines'),
+    ('HA', 'Hawaiian Airlines'),  ('VX', 'Virgin America'),
 ]
 
 MOCK_AIRPORTS = [
-    ('ATL', 'Hartsfield-Jackson Atlanta',     'Atlanta'),
-    ('LAX', 'Los Angeles International',      'Los Angeles'),
-    ('ORD', "O'Hare International",           'Chicago'),
-    ('DFW', 'Dallas/Fort Worth International','Dallas'),
-    ('DEN', 'Denver International',           'Denver'),
-    ('JFK', 'John F. Kennedy International',  'New York'),
-    ('SFO', 'San Francisco International',    'San Francisco'),
-    ('SEA', 'Seattle-Tacoma International',   'Seattle'),
-    ('LAS', 'Harry Reid International',       'Las Vegas'),
-    ('MCO', 'Orlando International',          'Orlando'),
-    ('MIA', 'Miami International',            'Miami'),
-    ('BOS', 'Logan International',            'Boston'),
-    ('MSP', 'Minneapolis-Saint Paul',         'Minneapolis'),
-    ('PHX', 'Phoenix Sky Harbor',             'Phoenix'),
-    ('EWR', 'Newark Liberty International',   'Newark'),
+    ('ATL', 'Hartsfield-Jackson Atlanta',      'Atlanta'),
+    ('LAX', 'Los Angeles International',       'Los Angeles'),
+    ('ORD', "O'Hare International",            'Chicago'),
+    ('DFW', 'Dallas/Fort Worth International', 'Dallas'),
+    ('DEN', 'Denver International',            'Denver'),
+    ('JFK', 'John F. Kennedy International',   'New York'),
+    ('SFO', 'San Francisco International',     'San Francisco'),
+    ('SEA', 'Seattle-Tacoma International',    'Seattle'),
+    ('LAS', 'Harry Reid International',        'Las Vegas'),
+    ('MCO', 'Orlando International',           'Orlando'),
+    ('MIA', 'Miami International',             'Miami'),
+    ('BOS', 'Logan International',             'Boston'),
+    ('MSP', 'Minneapolis-Saint Paul',          'Minneapolis'),
+    ('PHX', 'Phoenix Sky Harbor',              'Phoenix'),
+    ('EWR', 'Newark Liberty International',    'Newark'),
 ]
 
 MOCK_TOP_ROUTES = [
-    {'origin':'LAX','destination':'JFK','delay_rate':68},
-    {'origin':'ORD','destination':'LGA','delay_rate':62},
-    {'origin':'SFO','destination':'LAX','delay_rate':57},
-    {'origin':'ATL','destination':'ORD','delay_rate':54},
-    {'origin':'DFW','destination':'LAX','delay_rate':51},
-    {'origin':'JFK','destination':'BOS','delay_rate':49},
-    {'origin':'MIA','destination':'JFK','delay_rate':47},
-    {'origin':'DEN','destination':'ORD','delay_rate':44},
-    {'origin':'SEA','destination':'SFO','delay_rate':42},
-    {'origin':'LAS','destination':'LAX','delay_rate':38},
+    {'origin': 'LAX', 'destination': 'JFK', 'delay_rate': 68},
+    {'origin': 'ORD', 'destination': 'LGA', 'delay_rate': 62},
+    {'origin': 'SFO', 'destination': 'LAX', 'delay_rate': 57},
+    {'origin': 'ATL', 'destination': 'ORD', 'delay_rate': 54},
+    {'origin': 'DFW', 'destination': 'LAX', 'delay_rate': 51},
+    {'origin': 'JFK', 'destination': 'BOS', 'delay_rate': 49},
+    {'origin': 'MIA', 'destination': 'JFK', 'delay_rate': 47},
+    {'origin': 'DEN', 'destination': 'ORD', 'delay_rate': 44},
+    {'origin': 'SEA', 'destination': 'SFO', 'delay_rate': 42},
+    {'origin': 'LAS', 'destination': 'LAX', 'delay_rate': 38},
 ]
 
+
+# ── LOOKUP HELPERS ──────────────────────────────────────────
 def get_airlines():
     try:
-        db   = get_db()
-        rows = db.execute(
-            "SELECT iata_code, airline_name FROM airline ORDER BY airline_name"
-        ).fetchall()
-        db.close()
-        if rows: return [(r['iata_code'], r['airline_name']) for r in rows]
+        conn = get_db()
+        rows = query(conn, "SELECT iata_code, airline_name FROM airline ORDER BY airline_name")
+        close(conn)
+        if rows:
+            return [(r['iata_code'], r['airline_name']) for r in rows]
     except Exception:
         pass
     return MOCK_AIRLINES
 
 def get_airports():
     try:
-        db   = get_db()
-        rows = db.execute(
-            "SELECT iata_code, airport_name, city FROM airport ORDER BY city"
-        ).fetchall()
-        db.close()
-        if rows: return [(r['iata_code'], r['airport_name'], r['city']) for r in rows]
+        conn = get_db()
+        rows = query(conn, "SELECT iata_code, airport_name, city FROM airport ORDER BY city")
+        close(conn)
+        if rows:
+            return [(r['iata_code'], r['airport_name'], r['city']) for r in rows]
     except Exception:
         pass
     return MOCK_AIRPORTS
@@ -155,11 +243,13 @@ def get_airports():
 # ROUTES
 # ══════════════════════════════════════════════════════════
 
+# ── HOME ────────────────────────────────────────────────────
 @app.route('/')
 def index():
     return render_template('index.html')
 
 
+# ── PREDICT ─────────────────────────────────────────────────
 @app.route('/predict', methods=['GET', 'POST'])
 def predict():
     airlines = get_airlines()
@@ -185,9 +275,12 @@ def predict():
         except Exception:
             month, dow = 6, 3
 
-        prediction = mock_predict(
-            airline=airline, origin=origin, destination=destination,
-            month=month, day_of_week=dow,
+        prediction = predict_delay(
+            airline=airline,
+            origin=origin,
+            destination=destination,
+            month=month,
+            day_of_week=dow,
             scheduled_departure_hhmm=int(sched_dep) if sched_dep else 1200,
             departure_delay=float(dep_delay),
             distance=float(distance),
@@ -216,8 +309,8 @@ def predict():
         prediction_id = None
         if session.get('user_id'):
             try:
-                db  = get_db()
-                cur = db.execute("""
+                conn = get_db()
+                prediction_id = execute(conn, """
                     INSERT INTO prediction_log
                       (user_id, flight_number, predicted_for_date,
                        delay_probability, risk_level,
@@ -227,16 +320,17 @@ def predict():
                       prediction['delay_probability'],
                       prediction['risk_level'],
                       int(prediction['is_delayed']),
-                      datetime.utcnow()))
-                prediction_id = cur.lastrowid
-                db.execute("""
+                      str(datetime.utcnow())))
+                execute(conn, """
                     INSERT INTO search_history
                       (user_id, flight_number, search_date,
                        queried_flight_date, searched_at)
                     VALUES (?,?,?,?,?)
                 """, (session['user_id'], flight_no,
-                      date.today(), flight_date, datetime.utcnow()))
-                db.commit(); db.close()
+                      str(date.today()), flight_date,
+                      str(datetime.utcnow())))
+                commit(conn)
+                close(conn)
             except Exception:
                 pass
 
@@ -249,6 +343,7 @@ def predict():
                            prefill=prefill)
 
 
+# ── DASHBOARD ───────────────────────────────────────────────
 @app.route('/dashboard')
 def dashboard():
     stats = {
@@ -259,23 +354,23 @@ def dashboard():
     }
     chart_data = {
         'airline': {
-            'labels': ['AA','DL','UA','WN','B6','AS','NK','F9','HA','VX'],
+            'labels': ['AA', 'DL', 'UA', 'WN', 'B6', 'AS', 'NK', 'F9', 'HA', 'VX'],
             'values': [42, 35, 48, 29, 38, 31, 55, 52, 22, 36],
         },
         'hour': {
             'labels': [f"{h}:00" for h in range(0, 24)],
-            'values': [18,15,12,10,11,14,19,25,28,30,
-                       32,34,35,36,38,40,42,45,48,50,
-                       47,44,38,28],
+            'values': [18, 15, 12, 10, 11, 14, 19, 25, 28, 30,
+                       32, 34, 35, 36, 38, 40, 42, 45, 48, 50,
+                       47, 44, 38, 28],
         },
         'month': {
-            'labels': ['Jan','Feb','Mar','Apr','May','Jun',
-                       'Jul','Aug','Sep','Oct','Nov','Dec'],
-            'values': [45,38,35,32,36,40,52,48,34,30,35,50],
+            'labels': ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
+            'values': [45, 38, 35, 32, 36, 40, 52, 48, 34, 30, 35, 50],
         },
         'day': {
-            'labels': ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'],
-            'values': [35,42,34,33,38,48,30],
+            'labels': ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+            'values': [35, 42, 34, 33, 38, 48, 30],
         },
     }
     return render_template('dashboard.html',
@@ -285,6 +380,7 @@ def dashboard():
                            airlines=get_airlines())
 
 
+# ── COMPARE ─────────────────────────────────────────────────
 @app.route('/compare')
 def compare():
     origin      = request.args.get('origin', '')
@@ -301,15 +397,16 @@ def compare():
             dow, mon = 3, 6
 
         sample_flights = [
-            ('AA101','AA','American Airlines',  '06:00',315),
-            ('DL202','DL','Delta Air Lines',    '09:30',320),
-            ('UA303','UA','United Airlines',    '12:45',318),
-            ('WN404','WN','Southwest Airlines', '15:00',310),
-            ('B6505','B6','JetBlue Airways',    '18:30',325),
+            ('AA101', 'AA', 'American Airlines',  '06:00', 315),
+            ('DL202', 'DL', 'Delta Air Lines',    '09:30', 320),
+            ('UA303', 'UA', 'United Airlines',    '12:45', 318),
+            ('WN404', 'WN', 'Southwest Airlines', '15:00', 310),
+            ('B6505', 'B6', 'JetBlue Airways',    '18:30', 325),
         ]
+
         for fn, code, name, dep, dur in sample_flights:
-            hhmm = int(dep.replace(':',''))
-            pred = mock_predict(
+            hhmm = int(dep.replace(':', ''))
+            pred = predict_delay(
                 airline=code, origin=origin, destination=destination,
                 month=mon, day_of_week=dow,
                 scheduled_departure_hhmm=hhmm,
@@ -329,6 +426,7 @@ def compare():
                 'ontime_rate':         random.randint(55, 85),
                 'is_best':             False,
             })
+
         if flights:
             min(flights, key=lambda x: x['delay_probability'])['is_best'] = True
 
@@ -337,138 +435,171 @@ def compare():
                            airports=get_airports())
 
 
+# ── LOGIN ────────────────────────────────────────────────────
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        email    = request.form.get('email','').strip().lower()
-        password = request.form.get('password','')
+        email    = request.form.get('email', '').strip().lower()
+        password = request.form.get('password', '')
         try:
-            db   = get_db()
-            user = db.execute(
-                "SELECT * FROM user WHERE email=?", (email,)
-            ).fetchone()
-            db.close()
+            conn = get_db()
+            user = query_one(conn,
+                "SELECT * FROM user WHERE email = ?", (email,))
+            close(conn)
+
             if user and check_password(password, user['password_hash']):
                 session['user_id']  = user['user_id']
                 session['username'] = user['username']
-                db = get_db()
-                db.execute("UPDATE user SET last_login=? WHERE user_id=?",
-                           (datetime.utcnow(), user['user_id']))
-                db.commit(); db.close()
+                conn = get_db()
+                execute(conn,
+                    "UPDATE user SET last_login = ? WHERE user_id = ?",
+                    (str(datetime.utcnow()), user['user_id']))
+                commit(conn)
+                close(conn)
                 flash('Welcome back, ' + user['username'] + '!', 'success')
                 return redirect(url_for('profile'))
             else:
                 flash('Incorrect email or password.', 'error')
-        except Exception:
-            flash('Database not set up yet. Run: python init_db.py', 'error')
+        except Exception as e:
+            flash('Login error: ' + str(e), 'error')
+
     return render_template('login.html')
 
 
+# ── REGISTER ─────────────────────────────────────────────────
 @app.route('/register', methods=['POST'])
 def register():
-    username = request.form.get('username','').strip()
-    email    = request.form.get('email','').strip().lower()
-    password = request.form.get('password','')
+    username = request.form.get('username', '').strip()
+    email    = request.form.get('email', '').strip().lower()
+    password = request.form.get('password', '')
     pw_hash  = hash_password(password)
+
     try:
-        db  = get_db()
-        cur = db.execute(
-            "INSERT INTO user (username,email,password_hash,created_at) VALUES (?,?,?,?)",
-            (username, email, pw_hash, datetime.utcnow())
-        )
-        db.commit()
-        session['user_id']  = cur.lastrowid
+        conn = get_db()
+        uid  = execute(conn,
+            "INSERT INTO user (username, email, password_hash, created_at) VALUES (?,?,?,?)",
+            (username, email, pw_hash, str(datetime.utcnow())))
+        commit(conn)
+        close(conn)
+        session['user_id']  = uid
         session['username'] = username
-        db.close()
         flash('Account created! Welcome to SkyIQ.', 'success')
         return redirect(url_for('profile'))
-    except sqlite3.IntegrityError:
-        flash('Email already registered. Please sign in.', 'error')
-        return redirect(url_for('login'))
-    except Exception:
-        flash('Database not set up yet. Run: python init_db.py', 'error')
+    except Exception as e:
+        if 'Duplicate' in str(e) or 'UNIQUE' in str(e):
+            flash('Email already registered. Please sign in.', 'error')
+        else:
+            flash('Registration error: ' + str(e), 'error')
         return redirect(url_for('login'))
 
 
+# ── LOGOUT ───────────────────────────────────────────────────
 @app.route('/logout')
 def logout():
     session.clear()
     return redirect(url_for('index'))
 
 
+# ── PROFILE ──────────────────────────────────────────────────
 @app.route('/profile')
 def profile():
     if not session.get('user_id'):
         flash('Please sign in to view your profile.', 'info')
         return redirect(url_for('login'))
+
     try:
-        db      = get_db()
-        user    = db.execute(
-            "SELECT * FROM user WHERE user_id=?",
-            (session['user_id'],)
-        ).fetchone()
-        history = db.execute("""
-            SELECT sh.flight_number, sh.queried_flight_date,
-                   pl.delay_probability, pl.risk_level,
+        conn = get_db()
+        user = query_one(conn,
+            "SELECT * FROM user WHERE user_id = ?",
+            (session['user_id'],))
+
+        # Convert created_at to safe string format
+        if user:
+            user = dict(user)
+            user['created_at'] = format_date(user.get('created_at'))
+
+        history = query(conn, """
+            SELECT sh.flight_number,
+                   sh.queried_flight_date,
+                   pl.delay_probability,
+                   pl.risk_level,
                    uf.user_confirmed_delayed,
-                   '' as origin, '' as destination, '' as airline_code
+                   '' as origin,
+                   '' as destination,
+                   '' as airline_code
             FROM search_history sh
             LEFT JOIN prediction_log pl
-                   ON pl.user_id=sh.user_id
-                  AND pl.flight_number=sh.flight_number
-                  AND pl.predicted_for_date=sh.queried_flight_date
-            LEFT JOIN user_feedback uf ON uf.prediction_id=pl.prediction_id
-            WHERE sh.user_id=?
-            ORDER BY sh.searched_at DESC LIMIT 50
-        """, (session['user_id'],)).fetchall()
-        stats_row = db.execute("""
+                   ON pl.user_id = sh.user_id
+                  AND pl.flight_number = sh.flight_number
+                  AND pl.predicted_for_date = sh.queried_flight_date
+            LEFT JOIN user_feedback uf
+                   ON uf.prediction_id = pl.prediction_id
+            WHERE sh.user_id = ?
+            ORDER BY sh.searched_at DESC
+            LIMIT 50
+        """, (session['user_id'],))
+
+        stats_row = query_one(conn, """
             SELECT COUNT(*) as total,
                    SUM(predicted_delayed) as delayed,
-                   SUM(1-predicted_delayed) as ontime
-            FROM prediction_log WHERE user_id=?
-        """, (session['user_id'],)).fetchone()
-        db.close()
-    except Exception:
-        user      = {'username': session.get('username','User'),
-                     'email':'', 'created_at': datetime.utcnow()}
+                   SUM(1 - predicted_delayed) as ontime
+            FROM prediction_log
+            WHERE user_id = ?
+        """, (session['user_id'],))
+        close(conn)
+
+    except Exception as e:
+        user = {
+            'username':   session.get('username', 'User'),
+            'email':      '',
+            'created_at': 'N/A'
+        }
         history   = []
         stats_row = None
 
     stats = {
-        'total_searches':      stats_row['total']   if stats_row else 0,
-        'delayed_predictions': stats_row['delayed'] if stats_row else 0,
-        'ontime_predictions':  stats_row['ontime']  if stats_row else 0,
+        'total_searches':      stats_row['total']   if stats_row and stats_row['total']   else 0,
+        'delayed_predictions': stats_row['delayed'] if stats_row and stats_row['delayed'] else 0,
+        'ontime_predictions':  stats_row['ontime']  if stats_row and stats_row['ontime']  else 0,
     }
+
     return render_template('profile.html',
-                           user=dict(user),
-                           history=[dict(h) for h in history],
+                           user=user,
+                           history=history,
                            stats=stats)
 
 
+# ── FEEDBACK ─────────────────────────────────────────────────
 @app.route('/feedback', methods=['POST'])
 def feedback():
     if not session.get('user_id'):
         return redirect(url_for('login'))
+
     prediction_id  = request.form.get('prediction_id')
     actual_delayed = int(request.form.get('actual_delayed', 0))
+
     try:
-        db = get_db()
-        db.execute("""
-            INSERT OR REPLACE INTO user_feedback
+        conn = get_db()
+        execute(conn, """
+            INSERT INTO user_feedback
               (prediction_id, user_id, user_confirmed_delayed, submitted_at)
             VALUES (?,?,?,?)
         """, (prediction_id, session['user_id'],
-              actual_delayed, datetime.utcnow()))
-        db.execute("""
-            UPDATE prediction_log SET actual_delayed=?
-            WHERE prediction_id=?
+              actual_delayed, str(datetime.utcnow())))
+        execute(conn, """
+            UPDATE prediction_log
+            SET actual_delayed = ?
+            WHERE prediction_id = ?
         """, (actual_delayed, prediction_id))
-        db.commit(); db.close()
+        commit(conn)
+        close(conn)
         flash('Thanks for your feedback!', 'success')
     except Exception:
         pass
+
     return redirect(url_for('profile'))
 
 
+# ── RUN ──────────────────────────────────────────────────────
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    app.run(debug=DEBUG, port=PORT)

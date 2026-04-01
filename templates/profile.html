@@ -134,7 +134,7 @@
     <div class="avatar">{{ user.username[0].upper() }}</div>
     <div class="profile-info">
       <h1>{{ user.username }}</h1>
-      <div class="profile-meta">{{ user.email }} · Member since {{ user.created_at.strftime('%b %Y') }}</div>
+      <div class="profile-meta">{{ user.email }} · Member since {{ user.created_at }}</div>
     </div>
     <div style="margin-left:auto;">
       <a href="/logout" class="btn btn-secondary btn-sm">Sign out</a>
