@@ -11,7 +11,7 @@ Install:
 
 from flask import (Flask, render_template, request, redirect,
                    url_for, session, flash, jsonify)
-import hashlib, os, random
+import hashlib, os, random, math
 from datetime import datetime, date
 
 # ── CONFIG & DB ────────────────────────────────────────────
@@ -25,36 +25,120 @@ app.secret_key = SECRET_KEY
 # ══════════════════════════════════════════════════════════
 # ML MODEL LOADING
 # ══════════════════════════════════════════════════════════
-BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
-MODEL_DIR  = os.path.join(BASE_DIR, 'model')
+BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
 
-ML_READY   = False   # flips to True if all .pkl files load successfully
+ML_READY   = False   # flips to True if the .pkl file loads successfully
 model      = None
-encoder    = None
-FEATURES   = None
-CAT_COLS   = None
+label_encoders = {}  # built in-code; no separate encoder .pkl needed
 MODEL_NAME = 'Mock'
+
+# ── Categorical vocabulary (must match training data) ──────
+# Sorted alphabetically so sklearn LabelEncoder produces the
+# same integer mapping that was used during training.
+_AIRLINE_CODES = sorted([
+    '9E','AA','AS','B6','DL','EV','F9','HA',
+    'MQ','NK','OO','UA','VX','WN','YX'
+])
+_AIRPORT_CODES = sorted([
+    'ATL','BOS','CLT','DEN','DFW','DTW','EWR',
+    'IAH','JFK','LAS','LAX','LGA','MCO','MIA',
+    'MSP','ORD','PHX','SEA','SFO','SEA'
+])
+# Deduplicate while preserving sort
+_AIRPORT_CODES = sorted(set(_AIRPORT_CODES))
+_TIME_PERIODS  = sorted(['afternoon','evening','late_night','morning'])
+
+
+def _build_label_encoders():
+    """
+    Build sklearn LabelEncoders for the four categorical features
+    the regressor expects as integer codes.
+    """
+    try:
+        from sklearn.preprocessing import LabelEncoder
+        for col, vocab in [
+            ('AIRLINE',              _AIRLINE_CODES),
+            ('ORIGIN_AIRPORT',       _AIRPORT_CODES),
+            ('DESTINATION_AIRPORT',  _AIRPORT_CODES),
+            ('TIME_PERIOD',          _TIME_PERIODS),
+        ]:
+            le = LabelEncoder()
+            le.fit(vocab)
+            label_encoders[col] = le
+        return True
+    except ImportError:
+        return False
+
 
 try:
     import joblib
     import pandas as pd
 
-    model      = joblib.load(os.path.join(MODEL_DIR, 'flight_delay_model_best.pkl'))
-    encoder    = joblib.load(os.path.join(MODEL_DIR, 'feature_encoder.pkl'))
-    FEATURES   = joblib.load(os.path.join(MODEL_DIR, 'feature_names.pkl'))
-    CAT_COLS   = joblib.load(os.path.join(MODEL_DIR, 'cat_cols.pkl'))
-    MODEL_NAME = type(model).__name__
-    ML_READY   = True
-    print(f"✅ ML model loaded: {MODEL_NAME}")
+    # Look for the model in ./model/ first, then in the same directory
+    _candidates = [
+        os.path.join(BASE_DIR, 'model', 'flight_delay_regressor.pkl'),
+        os.path.join(BASE_DIR, 'flight_delay_regressor.pkl'),
+    ]
+    _model_path = next((p for p in _candidates if os.path.exists(p)), None)
 
-except FileNotFoundError:
-    print("⚠️  model/ folder not found — running in Mock mode")
-    print("   Place .pkl files in the model/ folder to enable real predictions")
+    if _model_path is None:
+        raise FileNotFoundError(
+            "flight_delay_regressor.pkl not found in model/ or current directory"
+        )
+
+    model      = joblib.load(_model_path)
+    MODEL_NAME = f"{type(model).__name__} (LightGBM)"
+
+    if _build_label_encoders():
+        ML_READY = True
+        print(f"✅ ML model loaded: {MODEL_NAME}")
+        print(f"   Path: {_model_path}")
+    else:
+        print("⚠️  scikit-learn not installed — label encoders unavailable; "
+              "falling back to Mock mode")
+
+except FileNotFoundError as e:
+    print(f"⚠️  {e}")
+    print("   Place flight_delay_regressor.pkl in model/ (or same folder) "
+          "to enable real predictions")
 except ImportError as e:
     print(f"⚠️  Missing package: {e} — running in Mock mode")
     print("   Run: pip install joblib scikit-learn lightgbm pandas numpy")
 except Exception as e:
     print(f"⚠️  Model load error: {e} — running in Mock mode")
+
+
+# ── helper: safe label-encode a single value ───────────────
+def _encode(col: str, value: str) -> int:
+    """
+    Return integer code for a categorical value.
+    Falls back gracefully to 0 for unseen labels so a missing
+    airline/airport code never crashes the prediction.
+    """
+    le = label_encoders.get(col)
+    if le is None:
+        return 0
+    try:
+        return int(le.transform([str(value)])[0])
+    except ValueError:
+        # Unseen label — use the first known class as a safe default
+        return 0
+
+
+# ── helper: delay-minutes → delay-probability ──────────────
+def _minutes_to_prob(predicted_minutes: float) -> float:
+    """
+    Convert the regressor's predicted arrival-delay (in minutes)
+    to a [0, 1] delay-probability using a logistic function
+    centred at 15 min (the industry-standard "delayed" threshold).
+
+      prob ≈ 0.09  when predicted_minutes = -30   (clearly early)
+      prob ≈ 0.27  when predicted_minutes =   0   (right on time)
+      prob = 0.50  when predicted_minutes =  15   (at the threshold)
+      prob ≈ 0.69  when predicted_minutes =  30   (half-hour late)
+      prob ≈ 0.88  when predicted_minutes =  60   (severely late)
+    """
+    return round(1.0 / (1.0 + math.exp(-(predicted_minutes - 15.0) / 20.0)), 4)
 
 
 # ══════════════════════════════════════════════════════════
@@ -66,12 +150,24 @@ def predict_delay(airline, origin, destination, month,
                   departure_delay, distance, scheduled_time):
     """
     Main prediction function.
-    Returns real ML prediction if model is loaded,
-    otherwise returns mock prediction seamlessly.
-    """
-    dep_hour = int(str(scheduled_departure_hhmm).zfill(4)[:2]) if scheduled_departure_hhmm else 12
+    Returns real ML prediction if the regressor is loaded,
+    otherwise returns a rule-based mock prediction seamlessly.
 
-    if dep_hour < 6:    time_period = 'late_night'
+    Return dict keys
+    ────────────────
+    is_delayed        bool   — True if likely delayed
+    delay_probability float  — [0, 1] probability of delay
+    predicted_delay_min float — raw regressor output (minutes), or None
+    risk_level        str   — 'Low' / 'Medium' / 'High'
+    departure_hour    int
+    time_period       str
+    model_name        str
+    message           str
+    """
+    dep_hour = int(str(scheduled_departure_hhmm).zfill(4)[:2]) \
+               if scheduled_departure_hhmm else 12
+
+    if   dep_hour < 6:  time_period = 'late_night'
     elif dep_hour < 12: time_period = 'morning'
     elif dep_hour < 18: time_period = 'afternoon'
     else:               time_period = 'evening'
@@ -80,55 +176,62 @@ def predict_delay(airline, origin, destination, month,
     if ML_READY:
         try:
             row = pd.DataFrame([{
-                'AIRLINE':             str(airline),
-                'ORIGIN_AIRPORT':      str(origin),
-                'DESTINATION_AIRPORT': str(destination),
+                'AIRLINE':             _encode('AIRLINE',             str(airline)),
+                'ORIGIN_AIRPORT':      _encode('ORIGIN_AIRPORT',      str(origin)),
+                'DESTINATION_AIRPORT': _encode('DESTINATION_AIRPORT', str(destination)),
                 'MONTH':               int(month),
                 'DAY_OF_WEEK':         int(day_of_week),
                 'DEPARTURE_HOUR':      int(dep_hour),
                 'DEPARTURE_DELAY':     float(departure_delay),
                 'DISTANCE':            float(distance),
                 'SCHEDULED_TIME':      float(scheduled_time),
-                'TIME_PERIOD':         time_period
+                'TIME_PERIOD':         _encode('TIME_PERIOD',         time_period),
             }])
-            row[CAT_COLS] = encoder.transform(row[CAT_COLS].astype(str))
-            prob = round(float(model.predict_proba(row)[0][1]), 4)
-            pred = prob >= 0.5
-            risk = 'Low' if prob < 0.35 else ('Medium' if prob < 0.65 else 'High')
+
+            predicted_minutes = float(model.predict(row)[0])
+            prob = _minutes_to_prob(predicted_minutes)
+            pred = prob >= 0.50                         # delayed if ≥50%
+            risk = ('Low'    if prob < 0.35 else
+                    'Medium' if prob < 0.65 else 'High')
+
             return {
-                'is_delayed':        pred,
-                'delay_probability': prob,
-                'risk_level':        risk,
-                'departure_hour':    dep_hour,
-                'time_period':       time_period,
-                'model_name':        MODEL_NAME,
+                'is_delayed':           pred,
+                'delay_probability':    prob,
+                'predicted_delay_min':  round(predicted_minutes, 1),
+                'risk_level':           risk,
+                'departure_hour':       dep_hour,
+                'time_period':          time_period,
+                'model_name':           MODEL_NAME,
                 'message': (
                     f"{'Likely DELAYED' if pred else 'Likely ON TIME'} "
-                    f"— {round(prob * 100, 1)}% delay probability ({risk} Risk)"
+                    f"— {round(prob * 100, 1)}% delay probability "
+                    f"({risk} Risk, ~{round(predicted_minutes)} min predicted)"
                 )
             }
+
         except Exception as e:
             print(f"⚠️  Prediction error: {e} — falling back to mock")
 
     # ── MOCK FALLBACK PATH ─────────────────────────────────
     base_prob = 0.28
-    if dep_hour >= 18:             base_prob += 0.20
-    if dep_hour >= 21:             base_prob += 0.10
-    if float(departure_delay) > 0: base_prob += 0.25
-    if month in [7, 12, 1]:       base_prob += 0.10
-    if day_of_week in [5, 1]:     base_prob += 0.05
+    if dep_hour >= 18:                 base_prob += 0.20
+    if dep_hour >= 21:                 base_prob += 0.10
+    if float(departure_delay) > 0:     base_prob += 0.25
+    if month in [7, 12, 1]:           base_prob += 0.10
+    if day_of_week in [5, 1]:         base_prob += 0.05
 
     prob = round(min(max(base_prob + random.uniform(-0.05, 0.05), 0.05), 0.95), 4)
     pred = prob >= 0.5
     risk = 'Low' if prob < 0.35 else ('Medium' if prob < 0.65 else 'High')
 
     return {
-        'is_delayed':        pred,
-        'delay_probability': prob,
-        'risk_level':        risk,
-        'departure_hour':    dep_hour,
-        'time_period':       time_period,
-        'model_name':        'Mock (model/ folder not found)',
+        'is_delayed':           pred,
+        'delay_probability':    prob,
+        'predicted_delay_min':  None,
+        'risk_level':           risk,
+        'departure_hour':       dep_hour,
+        'time_period':          time_period,
+        'model_name':           'Mock (flight_delay_regressor.pkl not found)',
         'message': (
             f"{'Likely DELAYED' if pred else 'Likely ON TIME'} "
             f"— {round(prob * 100, 1)}% delay probability ({risk} Risk)"
@@ -153,14 +256,12 @@ def check_password(password, stored):
 # ── DATE HELPER ─────────────────────────────────────────────
 def format_date(value):
     """
-    Safely format a date/datetime whether it comes as
-    a Python datetime object or a MySQL string.
-    Returns e.g. 'Jan 2024'
+    Safely format a date/datetime whether it comes as a Python
+    datetime object or a MySQL string.  Returns e.g. 'Jan 2024'
     """
     if not value:
         return 'N/A'
     if isinstance(value, str):
-        # MySQL returns '2024-01-15 10:30:00' or '2024-01-15'
         try:
             value = datetime.strptime(value[:19], '%Y-%m-%d %H:%M:%S')
         except Exception:
@@ -170,7 +271,6 @@ def format_date(value):
                 return str(value)[:7]
     return value.strftime('%b %Y')
 
-# Register as Jinja filter so templates can use {{ value | fmtdate }}
 app.jinja_env.filters['fmtdate'] = format_date
 
 
@@ -298,14 +398,35 @@ def predict():
             'departure_delay':     dep_delay,
         })
 
-        prediction['history'] = {
-            'total_flights':     random.randint(5, 14),
-            'total_on_time':     random.randint(3, 9),
-            'total_delayed':     random.randint(1, 5),
-            'delay_rate':        round(random.uniform(0.2, 0.7), 2),
-            'avg_delay_minutes': random.randint(18, 55),
-        }
+        # ── Historical stats from DB; fall back to mock ────
+        history_data = None
+        try:
+            conn = get_db()
+            hist = query_one(conn, """
+                SELECT total_flights, total_on_time, total_delayed,
+                       delay_rate, avg_delay_minutes
+                FROM   flight_aggregate
+                WHERE  flight_number = ?
+                ORDER  BY week_start_date DESC
+                LIMIT  1
+            """, (flight_no,))
+            close(conn)
+            if hist:
+                history_data = dict(hist)
+        except Exception:
+            pass
 
+        if not history_data:
+            history_data = {
+                'total_flights':     random.randint(5, 14),
+                'total_on_time':     random.randint(3, 9),
+                'total_delayed':     random.randint(1, 5),
+                'delay_rate':        round(random.uniform(0.2, 0.7), 2),
+                'avg_delay_minutes': random.randint(18, 55),
+            }
+        prediction['history'] = history_data
+
+        # ── Persist to DB if user is logged in ────────────
         prediction_id = None
         if session.get('user_id'):
             try:
@@ -513,7 +634,6 @@ def profile():
             "SELECT * FROM user WHERE user_id = ?",
             (session['user_id'],))
 
-        # Convert created_at to safe string format
         if user:
             user = dict(user)
             user['created_at'] = format_date(user.get('created_at'))

@@ -223,6 +223,14 @@
         <span class="detail-key">Time period</span>
         <span class="detail-val">{{ result.time_period | title }}</span>
       </div>
+      {% if result.predicted_delay_min is not none %}
+      <div class="detail-row">
+        <span class="detail-key">Predicted delay</span>
+        <span class="detail-val text-{{ 'red' if result.predicted_delay_min > 15 else ('amber' if result.predicted_delay_min > 0 else 'green') }}">
+          {{ result.predicted_delay_min }} min
+        </span>
+      </div>
+      {% endif %}
       <div class="detail-row">
         <span class="detail-key">Model used</span>
         <span class="detail-val">{{ result.model_name }}</span>

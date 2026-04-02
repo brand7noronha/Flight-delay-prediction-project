@@ -5,7 +5,7 @@ Change DB_TYPE here to switch between SQLite and MySQL.
 
 # ── DATABASE TYPE ───────────────────────────────────────────
 # Options: 'sqlite' or 'mysql'
-DB_TYPE = 'sqlite'   # ← change to 'mysql' when MySQL is ready
+DB_TYPE = 'mysql'   # ← change to 'mysql' when MySQL is ready
 
 # ── MYSQL CONFIG (only used when DB_TYPE = 'mysql') ─────────
 MYSQL_CONFIG = {
