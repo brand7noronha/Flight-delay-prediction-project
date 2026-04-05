@@ -11,8 +11,10 @@ Install:
 
 from flask import (Flask, render_template, request, redirect,
                    url_for, session, flash, jsonify)
-import hashlib, os, random, math
+import hashlib, logging, os, random, math
 from datetime import datetime, date
+
+logger = logging.getLogger(__name__)
 
 # ── CONFIG & DB ────────────────────────────────────────────
 from config import SECRET_KEY, DEBUG, PORT
@@ -429,15 +431,17 @@ def predict():
         # ── Persist to DB if user is logged in ────────────
         prediction_id = None
         if session.get('user_id'):
+            conn = None
             try:
                 conn = get_db()
+                uid = int(session['user_id'])
                 prediction_id = execute(conn, """
                     INSERT INTO prediction_log
                       (user_id, flight_number, predicted_for_date,
                        delay_probability, risk_level,
                        predicted_delayed, predicted_at)
                     VALUES (?,?,?,?,?,?,?)
-                """, (session['user_id'], flight_no, flight_date,
+                """, (uid, flight_no, flight_date,
                       prediction['delay_probability'],
                       prediction['risk_level'],
                       int(prediction['is_delayed']),
@@ -447,13 +451,20 @@ def predict():
                       (user_id, flight_number, search_date,
                        queried_flight_date, searched_at)
                     VALUES (?,?,?,?,?)
-                """, (session['user_id'], flight_no,
+                """, (uid, flight_no,
                       str(date.today()), flight_date,
                       str(datetime.utcnow())))
                 commit(conn)
-                close(conn)
             except Exception:
-                pass
+                logger.exception("Failed to persist prediction for user_id=%s", session.get('user_id'))
+                if conn is not None:
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+            finally:
+                if conn is not None:
+                    close(conn)
 
         prediction['prediction_id'] = prediction_id
         return render_template('result.html', result=prediction)
@@ -622,65 +633,110 @@ def logout():
 
 
 # ── PROFILE ──────────────────────────────────────────────────
+def _stat_int(value, default=0):
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return default
+
+
 @app.route('/profile')
 def profile():
     if not session.get('user_id'):
         flash('Please sign in to view your profile.', 'info')
         return redirect(url_for('login'))
 
+    uid = int(session['user_id'])
+    conn = None
+    user = None
+    history = []
+    stats_row = None
+
     try:
         conn = get_db()
-        user = query_one(conn,
-            "SELECT * FROM user WHERE user_id = ?",
-            (session['user_id'],))
+        try:
+            row = query_one(conn,
+                "SELECT * FROM user WHERE user_id = ?",
+                (uid,))
+            if row:
+                user = dict(row)
+                user['created_at'] = format_date(user.get('created_at'))
+        except Exception:
+            logger.exception("profile: user query failed (user_id=%s)", uid)
 
-        if user:
-            user = dict(user)
-            user['created_at'] = format_date(user.get('created_at'))
+        try:
+            # One prediction per search row: same flight+date can appear many times in
+            # prediction_log; a plain join multiplies rows (e.g. 3 searches -> 9 rows).
+            # Pick the latest prediction at or before this search's timestamp.
+            history = query(conn, """
+                SELECT sh.flight_number,
+                       sh.queried_flight_date,
+                       pl.delay_probability,
+                       pl.risk_level,
+                       uf.user_confirmed_delayed,
+                       '' AS origin,
+                       '' AS destination,
+                       '' AS airline_code
+                FROM search_history sh
+                LEFT JOIN prediction_log pl
+                       ON pl.prediction_id = (
+                            SELECT pl2.prediction_id
+                            FROM prediction_log pl2
+                            WHERE pl2.user_id = sh.user_id
+                              AND pl2.flight_number = sh.flight_number
+                              AND pl2.predicted_for_date = sh.queried_flight_date
+                              AND pl2.predicted_at <= sh.searched_at
+                            ORDER BY pl2.predicted_at DESC, pl2.prediction_id DESC
+                            LIMIT 1
+                       )
+                LEFT JOIN user_feedback uf
+                       ON uf.prediction_id = pl.prediction_id
+                WHERE sh.user_id = ?
+                ORDER BY sh.searched_at DESC
+                LIMIT 50
+            """, (uid,))
+        except Exception:
+            logger.exception("profile: history query failed (user_id=%s)", uid)
 
-        history = query(conn, """
-            SELECT sh.flight_number,
-                   sh.queried_flight_date,
-                   pl.delay_probability,
-                   pl.risk_level,
-                   uf.user_confirmed_delayed,
-                   '' as origin,
-                   '' as destination,
-                   '' as airline_code
-            FROM search_history sh
-            LEFT JOIN prediction_log pl
-                   ON pl.user_id = sh.user_id
-                  AND pl.flight_number = sh.flight_number
-                  AND pl.predicted_for_date = sh.queried_flight_date
-            LEFT JOIN user_feedback uf
-                   ON uf.prediction_id = pl.prediction_id
-            WHERE sh.user_id = ?
-            ORDER BY sh.searched_at DESC
-            LIMIT 50
-        """, (session['user_id'],))
+        try:
+            total_row = query_one(conn,
+                "SELECT COUNT(*) AS n FROM search_history WHERE user_id = ?",
+                (uid,))
+            delayed_row = query_one(conn, """
+                SELECT COALESCE(SUM(predicted_delayed), 0) AS n
+                FROM prediction_log WHERE user_id = ?
+            """, (uid,))
+            ontime_row = query_one(conn, """
+                SELECT COALESCE(SUM(CASE WHEN predicted_delayed = 0 THEN 1 ELSE 0 END), 0) AS n
+                FROM prediction_log WHERE user_id = ?
+            """, (uid,))
+            stats_row = {
+                'total':   total_row.get('n') if total_row else 0,
+                'delayed': delayed_row.get('n') if delayed_row else 0,
+                'ontime':  ontime_row.get('n') if ontime_row else 0,
+            }
+        except Exception:
+            logger.exception("profile: stats query failed (user_id=%s)", uid)
+    finally:
+        if conn is not None:
+            close(conn)
 
-        stats_row = query_one(conn, """
-            SELECT COUNT(*) as total,
-                   SUM(predicted_delayed) as delayed,
-                   SUM(1 - predicted_delayed) as ontime
-            FROM prediction_log
-            WHERE user_id = ?
-        """, (session['user_id'],))
-        close(conn)
-
-    except Exception as e:
+    if not user:
         user = {
             'username':   session.get('username', 'User'),
             'email':      '',
             'created_at': 'N/A'
         }
-        history   = []
-        stats_row = None
 
     stats = {
-        'total_searches':      stats_row['total']   if stats_row and stats_row['total']   else 0,
-        'delayed_predictions': stats_row['delayed'] if stats_row and stats_row['delayed'] else 0,
-        'ontime_predictions':  stats_row['ontime']  if stats_row and stats_row['ontime']  else 0,
+        'total_searches':      _stat_int(stats_row.get('total') if stats_row else None),
+        'delayed_predictions': _stat_int(stats_row.get('delayed') if stats_row else None),
+        'ontime_predictions':  _stat_int(stats_row.get('ontime') if stats_row else None),
     }
 
     return render_template('profile.html',
