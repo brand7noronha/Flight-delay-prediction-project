@@ -1,0 +1,5 @@
+git checkout main
+git pull origin main
+git branch branch-name -- to craete a new branch
+git checkout branch-name -- to switch to the new/your desired  branch
+
