@@ -1,3 +1,19 @@
+#merge branch into main
+first go to the main branch using
+git checkout main
+then 
+git merge <branch from which you want to pull from>
+
+#config set-up
+git config --list  -- to display
+git config --local user --local.name "your name"  to put your name
+git config --local user.email "your email"  
+
+#to set remote 
+git remote -v
+git remote add origin "url for the repo and that repo must exist on github"
+git remote set-url origin "url"
+
 git checkout main
 git pull origin main
 git branch branch-name -- to craete a new branch
