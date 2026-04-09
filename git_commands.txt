@@ -19,3 +19,6 @@ git pull origin main
 git branch branch-name -- to craete a new branch
 git checkout branch-name -- to switch to the new/your desired  branch
 
+Aviation Stack API Key:8bee62e0257c67a294c36e74a9846f41
+Radar24 API key:019bfe6e-c828-705e-a195-153ef2b97f52|bExWsP0S0lX2FwWAmjUmx0RrWFXc7KukWe9cStIJ52c61fd4
+
