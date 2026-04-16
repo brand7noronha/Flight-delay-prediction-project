@@ -11,10 +11,10 @@ DB_TYPE = 'mysql'   # ← change to 'mysql' when MySQL is ready
 
 # ── MYSQL CONFIG (only used when DB_TYPE = 'mysql') ─────────
 MYSQL_CONFIG = {
-    'host':     'localhost',
-    'user':     'skyiq',
-    'password': 'skyiq123',
-    'database': 'flight_delay_db',
+    'host':     os.getenv('DB_HOST'),
+    'user':     os.getenv('DB_USER'),
+    'password': os.getenv('DB_PASSWORD'),
+    'database': os.getenv('DB_NAME'),
 }
 
 # ── FLASK CONFIG ────────────────────────────────────────────
