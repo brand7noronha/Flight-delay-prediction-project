@@ -4,6 +4,9 @@ Change DB_TYPE here to switch between SQLite and MySQL.
 """
 
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # ── DATABASE TYPE ───────────────────────────────────────────
 # Options: 'sqlite' or 'mysql'
