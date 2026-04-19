@@ -405,8 +405,21 @@
   {% endif %}
 {% endwith %}
 
-<!-- ── PAGE CONTENT ──────────────────────────────────────── -->
-<div class="page-body">
+<!-- ── PAGE CONTENT ──────────────────────────────────────── --><div id="api-debug-panel" style="display:none; position:fixed; bottom:18px; right:18px; z-index:1200; width:320px; max-width:90vw; background: rgba(15,15,20,0.96); border:1px solid rgba(255,255,255,0.10); border-radius:20px; padding:18px; color: var(--text-primary); box-shadow: 0 24px 60px rgba(0,0,0,0.4); font-size:13px;">
+  <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px;">
+    <span style="font-weight:700;">API Debug</span>
+    <button id="api-debug-close" class="btn btn-ghost" style="padding:6px 10px; font-size:12px;">Close</button>
+  </div>
+  <div style="line-height:1.5;">
+    <div><strong>Call count:</strong> {{ api_debug.call_count }}</div>
+    <div><strong>Last provider:</strong> {{ api_debug.last_call.provider if api_debug.last_call else 'n/a' }}</div>
+    <div><strong>Success:</strong> {{ 'yes' if api_debug.last_call and api_debug.last_call.success else 'no' }}</div>
+    <div style="margin-top:10px;"><strong>Details:</strong>
+      <pre style="white-space:pre-wrap; word-break:break-word; font-size:12px; margin:6px 0 0; color: var(--text-secondary);">{{ api_debug.last_call.note if api_debug.last_call else 'No calls yet' }}</pre>
+    </div>
+  </div>
+  <div style="margin-top:12px; color: var(--text-tertiary); font-size:12px;">Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> to toggle this panel.</div>
+</div><div class="page-body">
   {% block content %}{% endblock %}
 </div>
 
@@ -429,6 +442,24 @@
     });
   }, { threshold: 0.1 });
   document.querySelectorAll('.fade-up').forEach(el => observer.observe(el));
+</script>
+<script>
+  const apiDebugPanel = document.getElementById('api-debug-panel');
+  const apiDebugClose = document.getElementById('api-debug-close');
+
+  document.addEventListener('keydown', (event) => {
+    if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'd') {
+      event.preventDefault();
+      if (!apiDebugPanel) return;
+      apiDebugPanel.style.display = apiDebugPanel.style.display === 'block' ? 'none' : 'block';
+    }
+  });
+
+  if (apiDebugClose) {
+    apiDebugClose.addEventListener('click', () => {
+      if (apiDebugPanel) apiDebugPanel.style.display = 'none';
+    });
+  }
 </script>
 
 {% block scripts %}{% endblock %}

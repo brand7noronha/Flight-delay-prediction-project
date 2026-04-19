@@ -14,10 +14,15 @@ from flask import (Flask, render_template, request, redirect,
 import hashlib, logging, os, random, math
 from datetime import datetime, date
 
+import requests
+
 logger = logging.getLogger(__name__)
 
 # ── CONFIG & DB ────────────────────────────────────────────
-from config import SECRET_KEY, DEBUG, PORT
+from config import (
+    SECRET_KEY, DEBUG, PORT,
+    AVIATIONSTACK_API_KEY, FLIGHTRADAR24_API_KEY,
+)
 from db import get_db, query, query_one, execute, commit, close
 
 app = Flask(__name__)
@@ -241,6 +246,240 @@ def predict_delay(airline, origin, destination, month,
     }
 
 
+# ── API SUPPORT ──────────────────────────────────────────────
+API_CALL_COUNTER = 0
+API_LAST_CALL = None
+
+_AIRPORT_COORDINATES = {
+    'ATL': (33.6407, -84.4277),
+    'BOS': (42.3656, -71.0096),
+    'CLT': (35.2144, -80.9473),
+    'DEN': (39.8561, -104.6737),
+    'DFW': (32.8998, -97.0403),
+    'DTW': (42.2162, -83.3554),
+    'EWR': (40.6895, -74.1745),
+    'IAH': (29.9902, -95.3368),
+    'JFK': (40.6413, -73.7781),
+    'LAS': (36.0840, -115.1537),
+    'LAX': (33.9416, -118.4085),
+    'LGA': (40.7769, -73.8740),
+    'MCO': (28.4312, -81.3081),
+    'MIA': (25.7959, -80.2870),
+    'MSP': (44.8848, -93.2223),
+    'ORD': (41.9742, -87.9073),
+    'PHX': (33.4353, -112.0058),
+    'SEA': (47.4502, -122.3088),
+    'SFO': (37.6213, -122.3790),
+}
+
+
+def increment_api_counter(provider, endpoint, success=True, note=None):
+    global API_CALL_COUNTER, API_LAST_CALL
+    API_CALL_COUNTER += 1
+    API_LAST_CALL = {
+        'provider': provider,
+        'endpoint': endpoint,
+        'success': success,
+        'note': note,
+        'time': datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC'),
+    }
+
+
+def _parse_iso_datetime(value):
+    if not value:
+        return None
+    try:
+        if isinstance(value, str) and value.endswith('Z'):
+            value = value[:-1] + '+00:00'
+        return datetime.fromisoformat(value)
+    except Exception:
+        try:
+            return datetime.strptime(value, '%Y-%m-%d %H:%M:%S')
+        except Exception:
+            return None
+
+
+def _get_hhmm_from_datetime(value):
+    if not value:
+        return None
+    try:
+        return int(value.strftime('%H%M'))
+    except Exception:
+        return None
+
+
+def _distance_between_airports(origin, destination):
+    if not origin or not destination:
+        return None
+    coords_a = _AIRPORT_COORDINATES.get(origin)
+    coords_b = _AIRPORT_COORDINATES.get(destination)
+    if not coords_a or not coords_b:
+        return None
+
+    lat1, lon1 = coords_a
+    lat2, lon2 = coords_b
+    radius = 3959.0
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat/2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2) ** 2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return int(round(radius * c))
+
+
+def _safe_int(value, default=None):
+    try:
+        return int(value)
+    except Exception:
+        try:
+            return int(float(value))
+        except Exception:
+            return default
+
+
+def _safe_float(value, default=None):
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
+def lookup_with_aviationstack(flight_no, flight_date=None):
+    if not AVIATIONSTACK_API_KEY:
+        return None
+
+    url = 'https://api.aviationstack.com/v1/flights'
+    params = {'access_key': AVIATIONSTACK_API_KEY, 'flight_iata': flight_no, 'limit': 10}
+    if flight_date:
+        params['flight_date'] = flight_date
+
+    try:
+        response = requests.get(url, params=params, timeout=12)
+        response.raise_for_status()
+        data = response.json()
+    except Exception as exc:
+        increment_api_counter('aviationstack', url, success=False, note=str(exc))
+        return None
+
+    flights = data.get('data') or []
+    if not flights:
+        increment_api_counter('aviationstack', url, success=False, note='no flights returned')
+        return None
+
+    flight = flights[0]
+    departure = flight.get('departure', {}) or {}
+    arrival = flight.get('arrival', {}) or {}
+
+    sched_dep_dt = _parse_iso_datetime(departure.get('scheduled'))
+    actual_dep_dt = _parse_iso_datetime(departure.get('actual'))
+    sched_arr_dt = _parse_iso_datetime(arrival.get('scheduled'))
+
+    scheduled_departure = _get_hhmm_from_datetime(sched_dep_dt)
+    scheduled_time = None
+    if sched_dep_dt and sched_arr_dt:
+        duration = int(round((sched_arr_dt - sched_dep_dt).total_seconds() / 60.0))
+        scheduled_time = abs(duration) if duration > 0 else None
+
+    departure_delay = None
+    if departure.get('delay') is not None:
+        departure_delay = _safe_int(departure.get('delay'), None)
+    elif actual_dep_dt and sched_dep_dt:
+        departure_delay = _safe_int((actual_dep_dt - sched_dep_dt).total_seconds() / 60.0, None)
+
+    flight_date_value = None
+    if sched_dep_dt:
+        flight_date_value = sched_dep_dt.strftime('%Y-%m-%d')
+    elif flight_date:
+        flight_date_value = flight_date
+
+    details = {
+        'source': 'Aviationstack',
+        'airline': flight.get('airline', {}).get('iata'),
+        'origin': departure.get('iata'),
+        'destination': arrival.get('iata'),
+        'flight_date': flight_date_value,
+        'scheduled_departure': f"{scheduled_departure:04d}" if scheduled_departure is not None else None,
+        'scheduled_time': scheduled_time,
+        'departure_delay': departure_delay,
+        'distance': _distance_between_airports(departure.get('iata'), arrival.get('iata')),
+        'message': 'Data populated from Aviationstack API',
+    }
+    increment_api_counter('aviationstack', url, success=True, note=f"flight_iata={flight_no}")
+    return details
+
+
+def lookup_with_flightradar24(flight_no, flight_date=None):
+    if not FLIGHTRADAR24_API_KEY:
+        return None
+
+    url = 'https://fr24api.flightradar24.com/api/live/flight-positions/light'
+    params = {'flight': flight_no}
+    headers = {
+        'Accept': 'application/json',
+        'Accept-Version': 'v1',
+        'Authorization': f'Bearer {FLIGHTRADAR24_API_KEY}'
+    }
+
+    try:
+        response = requests.get(url, params=params, headers=headers, timeout=12)
+        response.raise_for_status()
+        data = response.json()
+    except Exception as exc:
+        increment_api_counter('flightradar24', url, success=False, note=str(exc))
+        return None
+
+    results = data.get('data') or []
+    if not results:
+        increment_api_counter('flightradar24', url, success=False, note='no flights returned')
+        return None
+
+    item = results[0]
+    flight = item.get('flight') or item
+    departure = item.get('airport', {}).get('origin', {}) or {}
+    arrival = item.get('airport', {}).get('destination', {}) or {}
+
+    sched_dep_dt = _parse_iso_datetime(departure.get('scheduled'))
+    sched_arr_dt = _parse_iso_datetime(arrival.get('scheduled'))
+    scheduled_departure = _get_hhmm_from_datetime(sched_dep_dt)
+    scheduled_time = None
+    if sched_dep_dt and sched_arr_dt:
+        duration = int(round((sched_arr_dt - sched_dep_dt).total_seconds() / 60.0))
+        scheduled_time = abs(duration) if duration > 0 else None
+
+    departure_delay = None
+    if departure.get('delay') is not None:
+        departure_delay = _safe_int(departure.get('delay'), None)
+
+    flight_date_value = None
+    if sched_dep_dt:
+        flight_date_value = sched_dep_dt.strftime('%Y-%m-%d')
+    elif flight_date:
+        flight_date_value = flight_date
+
+    details = {
+        'source': 'Flightradar24',
+        'airline': (flight.get('airline', {}) or {}).get('iata') or flight.get('airline_iata'),
+        'origin': departure.get('iata'),
+        'destination': arrival.get('iata'),
+        'flight_date': flight_date_value,
+        'scheduled_departure': f"{scheduled_departure:04d}" if scheduled_departure is not None else None,
+        'scheduled_time': scheduled_time,
+        'departure_delay': departure_delay,
+        'distance': _distance_between_airports(departure.get('iata'), arrival.get('iata')),
+        'message': 'Data populated from Flightradar24 API',
+    }
+    increment_api_counter('flightradar24', url, success=True, note=f"flight={flight_no}")
+    return details
+
+
+def lookup_flight_details(flight_no, flight_date=None):
+    if not flight_no:
+        return {}
+    lookup = lookup_with_aviationstack(flight_no, flight_date)
+    if lookup:
+        return lookup
+    return lookup_with_flightradar24(flight_no, flight_date)
+
+
 # ── PASSWORD HELPERS ────────────────────────────────────────
 def hash_password(password):
     salt   = os.urandom(16).hex()
@@ -345,6 +584,30 @@ def get_airports():
 # ROUTES
 # ══════════════════════════════════════════════════════════
 
+@app.context_processor
+def inject_api_debug():
+    return {
+        'api_debug': {
+            'call_count': API_CALL_COUNTER,
+            'last_call': API_LAST_CALL,
+        }
+    }
+
+
+@app.route('/lookup-flight')
+def lookup_flight():
+    flight_no = request.args.get('flight_no', '').strip().upper()
+    flight_date = request.args.get('flight_date')
+    if not flight_no:
+        return jsonify({'ok': False, 'message': 'flight_no query parameter is required'}), 400
+
+    lookup = lookup_flight_details(flight_no, flight_date)
+    if not lookup or not lookup.get('source'):
+        return jsonify({'ok': False, 'message': 'Unable to find flight details for ' + flight_no}), 404
+
+    return jsonify({'ok': True, 'lookup': lookup})
+
+
 # ── HOME ────────────────────────────────────────────────────
 @app.route('/')
 def index():
@@ -360,15 +623,35 @@ def predict():
 
     if request.method == 'POST':
         form        = request.form
-        flight_no   = form.get('flight_no', '').strip().upper() or 'N/A'
-        airline     = form.get('airline', 'AA')
-        origin      = form.get('origin', 'LAX')
-        destination = form.get('destination', 'JFK')
-        flight_date = form.get('flight_date') or str(date.today())
-        sched_dep   = form.get('scheduled_departure', '12:00').replace(':', '')
-        distance    = form.get('distance', 500)
-        dep_delay   = form.get('departure_delay', 0)
-        sched_time  = form.get('scheduled_time', 120)
+        flight_no   = form.get('flight_no', '').strip().upper()
+        airline     = form.get('airline', '').strip().upper()
+        origin      = form.get('origin', '').strip().upper()
+        destination = form.get('destination', '').strip().upper()
+        flight_date = form.get('flight_date', '').strip() or None
+        sched_dep   = form.get('scheduled_departure', '').replace(':', '').strip() or None
+        distance    = form.get('distance', '').strip() or None
+        dep_delay   = form.get('departure_delay', '').strip() or None
+        sched_time  = form.get('scheduled_time', '').strip() or None
+
+        if flight_no and (not airline or not origin or not destination or not flight_date or not sched_dep or not distance or not sched_time):
+            lookup = lookup_flight_details(flight_no, flight_date)
+            if lookup:
+                airline     = airline or (lookup.get('airline') or airline)
+                origin      = origin or (lookup.get('origin') or origin)
+                destination = destination or (lookup.get('destination') or destination)
+                flight_date = flight_date or lookup.get('flight_date')
+                sched_dep   = sched_dep or lookup.get('scheduled_departure')
+                distance    = distance or lookup.get('distance')
+                dep_delay   = dep_delay or lookup.get('departure_delay')
+                sched_time  = sched_time or lookup.get('scheduled_time')
+                api_lookup  = lookup
+            else:
+                api_lookup = {'source': None, 'message': 'Lookup failed or no external data found.'}
+        else:
+            api_lookup = None
+
+        if not flight_date:
+            flight_date = str(date.today())
 
         try:
             dt    = datetime.strptime(flight_date, '%Y-%m-%d')
@@ -376,6 +659,11 @@ def predict():
             dow   = dt.isoweekday()
         except Exception:
             month, dow = 6, 3
+
+        sched_dep  = sched_dep or '1200'
+        distance   = distance or 500
+        dep_delay  = dep_delay or 0
+        sched_time = sched_time or 120
 
         prediction = predict_delay(
             airline=airline,
@@ -389,15 +677,20 @@ def predict():
             scheduled_time=float(sched_time)
         )
 
+        formatted_sched_dep = sched_dep
+        if formatted_sched_dep and len(str(formatted_sched_dep)) == 4:
+            formatted_sched_dep = f"{str(formatted_sched_dep)[:2]}:{str(formatted_sched_dep)[2:]}"
+
         prediction.update({
             'flight_number':       flight_no,
             'airline':             airline,
             'origin':              origin,
             'destination':         destination,
             'flight_date':         flight_date,
-            'scheduled_departure': form.get('scheduled_departure', '12:00'),
+            'scheduled_departure': formatted_sched_dep or '12:00',
             'distance':            distance,
             'departure_delay':     dep_delay,
+            'lookup':              api_lookup,
         })
 
         # ── Historical stats from DB; fall back to mock ────

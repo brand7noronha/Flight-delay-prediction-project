@@ -124,10 +124,12 @@
                  class="form-input"
                  value="{{ prefill.flight_no or '' }}"
                  required>
+          <div class="info-tooltip">Leave the rest blank and click Auto-fill to populate details from flight data APIs.</div>
+          <button type="button" id="lookup-flight-btn" class="btn btn-secondary btn-sm mt-8">Auto-fill details</button>
         </div>
         <div class="form-group">
           <label class="form-label" for="airline">Airline code</label>
-          <select id="airline" name="airline" class="form-select" required>
+          <select id="airline" name="airline" class="form-select">
             <option value="">Select airline</option>
             {% for code, name in airlines %}
               <option value="{{ code }}" {% if prefill.airline == code %}selected{% endif %}>
@@ -145,7 +147,7 @@
       <div class="form-row">
         <div class="form-group">
           <label class="form-label" for="origin">Origin airport</label>
-          <select id="origin" name="origin" class="form-select" required>
+          <select id="origin" name="origin" class="form-select">
             <option value="">Select origin</option>
             {% for code, name, city in airports %}
               <option value="{{ code }}" {% if prefill.origin == code %}selected{% endif %}>
@@ -156,7 +158,7 @@
         </div>
         <div class="form-group">
           <label class="form-label" for="destination">Destination airport</label>
-          <select id="destination" name="destination" class="form-select" required>
+          <select id="destination" name="destination" class="form-select">
             <option value="">Select destination</option>
             {% for code, name, city in airports %}
               <option value="{{ code }}" {% if prefill.destination == code %}selected{% endif %}>
@@ -176,15 +178,13 @@
           <label class="form-label" for="flight_date">Flight date</label>
           <input type="date" id="flight_date" name="flight_date"
                  class="form-input"
-                 value="{{ prefill.date or '' }}"
-                 required>
+                 value="{{ prefill.date or '' }}">
         </div>
         <div class="form-group">
           <label class="form-label" for="scheduled_departure">Scheduled departure</label>
           <input type="time" id="scheduled_departure" name="scheduled_departure"
                  class="form-input"
-                 value="{{ prefill.scheduled_departure or '' }}"
-                 required>
+                 value="{{ prefill.scheduled_departure or '' }}">
         </div>
         <div class="form-group">
           <label class="form-label" for="distance">Distance (miles)</label>
@@ -192,7 +192,7 @@
                  placeholder="e.g. 2475"
                  class="form-input"
                  value="{{ prefill.distance or '' }}"
-                 min="1" max="9999" required>
+                 min="1" max="9999">
         </div>
       </div>
 
@@ -216,7 +216,7 @@
                  placeholder="e.g. 315"
                  class="form-input"
                  value="{{ prefill.scheduled_time or '' }}"
-                 min="20" max="1000" required>
+                 min="20" max="1000">
         </div>
       </div>
 
@@ -268,7 +268,69 @@
     btn.disabled = true;
   });
 
-  // Auto-fill distance when route is selected (optional enhancement)
-  // Can be wired to a Flask /api/route-distance endpoint later
+  const lookupButton = document.getElementById('lookup-flight-btn');
+  const flightNoInput = document.getElementById('flight_no');
+
+  async function fillFlightDetails() {
+    const flightNo = flightNoInput.value.trim().toUpperCase();
+    if (!flightNo) {
+      alert('Enter a flight number first.');
+      return;
+    }
+
+    lookupButton.disabled = true;
+    lookupButton.textContent = 'Looking up…';
+
+    try {
+      const flightDate = document.getElementById('flight_date').value;
+      const params = new URLSearchParams({ flight_no: flightNo });
+      if (flightDate) params.set('flight_date', flightDate);
+
+      const res = await fetch(`/lookup-flight?${params.toString()}`);
+      const payload = await res.json();
+
+      if (!payload.ok) {
+        alert(payload.message || 'Could not find flight details.');
+        return;
+      }
+
+      const lookup = payload.lookup || {};
+      if (lookup.airline) {
+        document.getElementById('airline').value = lookup.airline;
+      }
+      if (lookup.origin) {
+        document.getElementById('origin').value = lookup.origin;
+      }
+      if (lookup.destination) {
+        document.getElementById('destination').value = lookup.destination;
+      }
+      if (lookup.flight_date) {
+        document.getElementById('flight_date').value = lookup.flight_date;
+      }
+      if (lookup.scheduled_departure) {
+        const dep = lookup.scheduled_departure.toString().padStart(4, '0');
+        document.getElementById('scheduled_departure').value = `${dep.slice(0,2)}:${dep.slice(2)}`;
+      }
+      if (lookup.distance) {
+        document.getElementById('distance').value = lookup.distance;
+      }
+      if (lookup.departure_delay !== undefined && lookup.departure_delay !== null) {
+        document.getElementById('departure_delay').value = lookup.departure_delay;
+      }
+      if (lookup.scheduled_time) {
+        document.getElementById('scheduled_time').value = lookup.scheduled_time;
+      }
+
+      alert('Flight details populated from external lookup. Review before submitting.');
+    } catch (error) {
+      console.error(error);
+      alert('Flight lookup failed. Please try again later.');
+    } finally {
+      lookupButton.disabled = false;
+      lookupButton.textContent = 'Auto-fill details';
+    }
+  }
+
+  lookupButton.addEventListener('click', fillFlightDetails);
 </script>
 {% endblock %}

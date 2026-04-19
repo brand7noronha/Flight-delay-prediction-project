@@ -1,6 +1,10 @@
+.vscode/
 __pycache__/
 *venv/
 *.pyc
 database/flights.db
 .env
 *.zip
+
+# Ignore environment variables
+.env
