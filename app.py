@@ -6,6 +6,7 @@ MCA Group 3 — Apa Mestry (2512) & Brandon Noronha (2514)
 Install:
     pip install flask pymysql joblib scikit-learn lightgbm pandas numpy
     python init_db_mysql.py
+    python seed_flight_data.py
     python app.py
 """
 
@@ -34,12 +35,11 @@ app.secret_key = SECRET_KEY
 # ══════════════════════════════════════════════════════════
 BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
 
-ML_READY   = False   # flips to True if the .pkl file loads successfully
+ML_READY   = False
 model      = None
-label_encoders = {}  # built in-code; no separate encoder .pkl needed
+label_encoders = {}
 MODEL_NAME = 'Mock'
 
-# ── Categorical vocabulary (must match training data) ──────
 _AIRLINE_CODES = sorted([
     '9E','AA','AS','B6','DL','EV','F9','HA',
     'MQ','NK','OO','UA','VX','WN','YX'
@@ -197,14 +197,116 @@ def predict_delay(airline, origin, destination, month,
     }
 
 
+# ══════════════════════════════════════════════════════════
+# SYNC FUNCTION - Adds predicted flights to database
+# ══════════════════════════════════════════════════════════
+def sync_flight_to_database(flight_no, airline, flight_date, scheduled_departure, 
+                             departure_delay, scheduled_time, is_delayed):
+    """Sync predicted flight to weekly_flight_record and update aggregates"""
+    try:
+        conn = get_db()
+        
+        # Get airline_id
+        airline_row = query_one(conn, "SELECT airline_id FROM airline WHERE iata_code = %s", (airline,))
+        if not airline_row:
+            print(f"⚠️ Airline {airline} not found")
+            return
+        
+        airline_id = airline_row['airline_id']
+        
+        # Check if flight already exists for this date
+        existing = query_one(conn, """
+            SELECT record_id FROM weekly_flight_record 
+            WHERE flight_number = %s AND flight_date = %s
+        """, (flight_no, flight_date))
+        
+        if not existing:
+            # Insert the flight record
+            execute(conn, """
+                INSERT INTO weekly_flight_record 
+                (flight_number, airline_id, flight_date, scheduled_departure, 
+                 departure_delay_min, arrival_delay_min, is_delayed, scheduled_time, is_cancelled)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 0)
+            """, (
+                flight_no, airline_id, flight_date, scheduled_departure,
+                float(departure_delay) if departure_delay else 0,
+                float(departure_delay) if departure_delay else 0,
+                1 if is_delayed else 0,
+                float(scheduled_time) if scheduled_time else 120
+            ))
+            commit(conn)
+            print(f"✅ Synced flight {flight_no} on {flight_date} to database")
+            
+            # Update flight_aggregate
+            update_flight_aggregate(conn, flight_no, airline_id, flight_date)
+        else:
+            print(f"ℹ️ Flight {flight_no} on {flight_date} already exists in database")
+        
+        close(conn)
+    except Exception as e:
+        print(f"⚠️ Failed to sync flight: {e}")
+
+
+def update_flight_aggregate(conn, flight_no, airline_id, flight_date):
+    """Recalculate and update aggregate for a flight"""
+    try:
+        cursor = conn.cursor()
+        
+        # Get all records for this flight
+        cursor.execute("""
+            SELECT 
+                COUNT(*) as total_flights,
+                SUM(is_delayed) as total_delayed,
+                SUM(CASE WHEN is_delayed = 0 THEN 1 ELSE 0 END) as total_on_time,
+                AVG(is_delayed) * 100 as delay_rate,
+                AVG(CASE WHEN arrival_delay_min > 0 THEN arrival_delay_min ELSE 0 END) as avg_delay_minutes
+            FROM weekly_flight_record
+            WHERE flight_number = %s
+        """, (flight_no,))
+        
+        agg_data = cursor.fetchone()
+        
+        if agg_data and agg_data[0] > 0:
+            # Get the latest flight date for week calculation
+            cursor.execute("""
+                SELECT flight_date FROM weekly_flight_record 
+                WHERE flight_number = %s 
+                ORDER BY flight_date DESC LIMIT 1
+            """, (flight_no,))
+            latest_date = cursor.fetchone()[0]
+            
+            # Insert or update aggregate
+            cursor.execute("""
+                INSERT INTO flight_aggregate 
+                (flight_number, airline_id, week_start_date, week_end_date,
+                 total_flights, total_delayed, total_on_time, delay_rate, avg_delay_minutes)
+                VALUES (%s, %s, 
+                        DATE_SUB(%s, INTERVAL WEEKDAY(%s) DAY),
+                        DATE_ADD(DATE_SUB(%s, INTERVAL WEEKDAY(%s) DAY), INTERVAL 6 DAY),
+                        %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    total_flights = VALUES(total_flights),
+                    total_delayed = VALUES(total_delayed),
+                    total_on_time = VALUES(total_on_time),
+                    delay_rate = VALUES(delay_rate),
+                    avg_delay_minutes = VALUES(avg_delay_minutes)
+            """, (
+                flight_no, airline_id,
+                latest_date, latest_date, latest_date, latest_date,
+                agg_data[0], agg_data[1], agg_data[2], agg_data[3], agg_data[4] or 0
+            ))
+            conn.commit()
+            print(f"✅ Updated aggregate for flight {flight_no}")
+        
+        cursor.close()
+    except Exception as e:
+        print(f"⚠️ Failed to update aggregate: {e}")
+
+
 # ── API SUPPORT ──────────────────────────────────────────────
 API_CALL_COUNTER = 0
 API_LAST_CALL = None
 
-# ── AIRPORT COORDINATES ─────────────────────────────────────
-# These are used by _distance_between_airports() as a fallback when the
-# airport table does not yet have latitude/longitude populated.
-# Primary source: the airport table (queried live and cached in _coord_cache).
 _AIRPORT_COORDINATES_FALLBACK = {
     'ATL': (33.6407, -84.4277),  'BOS': (42.3656, -71.0096),
     'CLT': (35.2144, -80.9473),  'DEN': (39.8561,-104.6737),
@@ -218,16 +320,10 @@ _AIRPORT_COORDINATES_FALLBACK = {
     'SEA': (47.4502,-122.3088),  'SFO': (37.6213,-122.3790),
 }
 
-# Simple in-process cache so we don't hit the DB on every haversine call.
 _coord_cache: dict = {}
 
 
 def _get_airport_coords(iata_code: str):
-    """
-    Return (latitude, longitude) for an IATA code.
-    Tries the DB first (caching the result), then falls back to the
-    hardcoded dict so the app works even before init_db has run.
-    """
     if not iata_code:
         return None
     iata_code = iata_code.upper()
@@ -248,7 +344,7 @@ def _get_airport_coords(iata_code: str):
             _coord_cache[iata_code] = coords
             return coords
     except Exception:
-        pass  # DB not ready yet; fall through to the hardcoded dict
+        pass
 
     coords = _AIRPORT_COORDINATES_FALLBACK.get(iata_code)
     if coords:
@@ -292,7 +388,6 @@ def _get_hhmm_from_datetime(value):
 
 
 def _distance_between_airports(origin, destination):
-    """Haversine distance in miles between two IATA airport codes."""
     if not origin or not destination:
         return None
     coords_a = _get_airport_coords(origin)
@@ -302,7 +397,7 @@ def _distance_between_airports(origin, destination):
 
     lat1, lon1 = coords_a
     lat2, lon2 = coords_b
-    radius = 3959.0  # Earth radius in miles
+    radius = 3959.0
     dlat = math.radians(lat2 - lat1)
     dlon = math.radians(lon2 - lon1)
     a = (math.sin(dlat/2) ** 2 +
@@ -707,6 +802,17 @@ def predict():
             'lookup':              api_lookup,
         })
 
+        # ── SYNC TO DATABASE ──
+        sync_flight_to_database(
+            flight_no=flight_no,
+            airline=airline,
+            flight_date=flight_date,
+            scheduled_departure=formatted_sched_dep or '12:00',
+            departure_delay=dep_delay,
+            scheduled_time=sched_time,
+            is_delayed=prediction['is_delayed']
+        )
+
         history_data = None
         try:
             conn = get_db()
@@ -714,7 +820,7 @@ def predict():
                 SELECT total_flights, total_on_time, total_delayed,
                        delay_rate, avg_delay_minutes
                 FROM   flight_aggregate
-                WHERE  flight_number = ?
+                WHERE  flight_number = %s
                 ORDER  BY week_start_date DESC
                 LIMIT  1
             """, (flight_no,))
@@ -745,7 +851,7 @@ def predict():
                       (user_id, flight_number, predicted_for_date,
                        delay_probability, risk_level,
                        predicted_delayed, predicted_at)
-                    VALUES (?,?,?,?,?,?,?)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """, (uid, flight_no, flight_date,
                       prediction['delay_probability'],
                       prediction['risk_level'],
@@ -755,7 +861,7 @@ def predict():
                     INSERT INTO search_history
                       (user_id, flight_number, search_date,
                        queried_flight_date, searched_at)
-                    VALUES (?,?,?,?,?)
+                    VALUES (%s, %s, %s, %s, %s)
                 """, (uid, flight_no,
                       str(date.today()), flight_date,
                       str(datetime.utcnow())))
@@ -780,43 +886,7 @@ def predict():
                            prefill=prefill)
 
 
-# # ── DASHBOARD ───────────────────────────────────────────────
-# @app.route('/dashboard')
-# def dashboard():
-#     stats = {
-#         'total_flights':  1284,
-#         'delay_rate':     38.4,
-#         'avg_delay':      34,
-#         'model_accuracy': 78,
-#     }
-#     chart_data = {
-#         'airline': {
-#             'labels': ['AA', 'DL', 'UA', 'WN', 'B6', 'AS', 'NK', 'F9', 'HA', 'VX'],
-#             'values': [42, 35, 48, 29, 38, 31, 55, 52, 22, 36],
-#         },
-#         'hour': {
-#             'labels': [f"{h}:00" for h in range(0, 24)],
-#             'values': [18, 15, 12, 10, 11, 14, 19, 25, 28, 30,
-#                        32, 34, 35, 36, 38, 40, 42, 45, 48, 50,
-#                        47, 44, 38, 28],
-#         },
-#         'month': {
-#             'labels': ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-#                        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
-#             'values': [45, 38, 35, 32, 36, 40, 52, 48, 34, 30, 35, 50],
-#         },
-#         'day': {
-#             'labels': ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
-#             'values': [35, 42, 34, 33, 38, 48, 30],
-#         },
-#     }
-#     return render_template('dashboard.html',
-#                            stats=stats,
-#                            chart_data=chart_data,
-#                            top_routes=MOCK_TOP_ROUTES,
-#                            airlines=get_airlines())
-
-
+# ── DASHBOARD ───────────────────────────────────────────────
 @app.route('/dashboard')
 def dashboard():
     """Dynamic dashboard with real database data"""
@@ -825,7 +895,7 @@ def dashboard():
     airline_filter = request.args.get('airline', 'ALL')
     month_filter = request.args.get('month', '0')
     
-    print(f"Dashboard filters - Airline: {airline_filter}, Month: {month_filter}")  # Debug
+    print(f"Dashboard filters - Airline: {airline_filter}, Month: {month_filter}")
     
     try:
         conn = get_db()
@@ -876,7 +946,7 @@ def dashboard():
             'model_accuracy': round(accuracy_row['accuracy'], 0) if accuracy_row else 78,
         }
         
-        # ── CHART 1: Delay by Airline (Filtered by month) ──
+        # ── CHART 1: Delay by Airline ────────────────────
         chart_where = "1=1"
         if month_filter != '0':
             chart_where = f"MONTH(wfr.flight_date) = {month_filter}"
@@ -899,7 +969,7 @@ def dashboard():
             'values': [round(row['delay_rate'], 1) for row in airline_rows]
         } if airline_rows else {'labels': [], 'values': []}
         
-        # ── CHART 2: Delay by Hour (Filtered) ────────────
+        # ── CHART 2: Delay by Hour ───────────────────────
         hour_where = "1=1"
         hour_params = []
         
@@ -924,7 +994,7 @@ def dashboard():
             'values': [round(row['delay_rate'], 1) for row in hour_rows]
         } if hour_rows else {'labels': [], 'values': []}
         
-        # ── CHART 3: Delay by Month (Filtered by airline) ─
+        # ── CHART 3: Delay by Month ──────────────────────
         month_where = "1=1"
         month_params = []
         
@@ -952,7 +1022,7 @@ def dashboard():
             'values': [round(row['delay_rate'], 1) for row in month_rows]
         } if month_rows else {'labels': [], 'values': []}
         
-        # ── CHART 4: Delay by Day of Week (Filtered) ─────
+        # ── CHART 4: Delay by Day of Week ────────────────
         day_query = f"""
             SELECT 
                 DAYOFWEEK(wfr.flight_date) as dow,
@@ -1047,7 +1117,6 @@ def dashboard():
             {'origin': 'DFW', 'destination': 'LAX', 'delay_rate': 51},
         ]
     
-    # IMPORTANT: Make sure to include current_airline and current_month here
     return render_template('dashboard.html',
                            stats=stats,
                            chart_data=chart_data,
@@ -1113,51 +1182,6 @@ def compare():
                            airports=get_airports())
 
 
-@app.route('/api/dashboard-stats')
-def api_dashboard_stats():
-    """API endpoint for dynamic dashboard filtering"""
-    airline = request.args.get('airline', 'ALL')
-    month = request.args.get('month', '0')
-    
-    try:
-        conn = get_db()
-        
-        # Build dynamic query
-        where_clause = "WHERE 1=1"
-        params = []
-        
-        if airline != 'ALL':
-            where_clause += " AND a.iata_code = %s"
-            params.append(airline)
-        
-        if month != '0':
-            where_clause += " AND MONTH(wfr.flight_date) = %s"
-            params.append(month)
-        
-        # Get filtered stats
-        query_str = f"""
-            SELECT 
-                COUNT(*) as total_flights,
-                AVG(wfr.is_delayed) * 100 as delay_rate
-            FROM weekly_flight_record wfr
-            JOIN airline a ON wfr.airline_id = a.airline_id
-            {where_clause}
-        """
-        
-        result = query_one(conn, query_str, params if params else None)
-        close(conn)
-        
-        return jsonify({
-            'success': True,
-            'stats': {
-                'total_flights': int(result['total_flights']) if result else 0,
-                'delay_rate': round(result['delay_rate'], 1) if result else 0
-            }
-        })
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
-
-
 # ── LOGIN ────────────────────────────────────────────────────
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -1165,7 +1189,6 @@ def login():
         email    = request.form.get('email', '').strip().lower()
         password = request.form.get('password', '')
 
-        # ── Server-side validation ─────────────────────────
         ok, err = validate_email(email)
         if not ok:
             flash(err, 'error')
@@ -1207,7 +1230,6 @@ def register():
     password        = request.form.get('password', '')
     confirm_password = request.form.get('confirm_password', '')
 
-    # ── Server-side validation (mirrors client-side rules) ──
     ok, err = validate_username(username)
     if not ok:
         flash(err, 'error')
@@ -1258,10 +1280,6 @@ def logout():
 # ── DELETE ACCOUNT ───────────────────────────────────────────
 @app.route('/delete-account', methods=['POST'])
 def delete_account():
-    """
-    Permanently delete the current user's account after verifying their password.
-    Cascades: user_feedback → prediction_log → search_history → user
-    """
     if not session.get('user_id'):
         flash('Please sign in first.', 'info')
         return redirect(url_for('login'))
@@ -1282,7 +1300,6 @@ def delete_account():
             flash('Incorrect password. Account was NOT deleted.', 'error')
             return redirect(url_for('profile'))
 
-        # Cascade delete in FK order
         conn = get_db()
         execute(conn, "DELETE FROM user_feedback   WHERE user_id = ?", (uid,))
         execute(conn, "DELETE FROM prediction_log  WHERE user_id = ?", (uid,))
