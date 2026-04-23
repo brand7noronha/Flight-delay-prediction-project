@@ -6,12 +6,13 @@ MCA Group 3 — Apa Mestry (2512) & Brandon Noronha (2514)
 Install:
     pip install flask pymysql joblib scikit-learn lightgbm pandas numpy
     python init_db_mysql.py
+    python seed_flight_data.py
     python app.py
 """
 
 from flask import (Flask, render_template, request, redirect,
                    url_for, session, flash, jsonify)
-import hashlib, logging, os, random, math
+import hashlib, logging, os, random, math, re
 from datetime import datetime, date
 
 import requests
@@ -34,33 +35,24 @@ app.secret_key = SECRET_KEY
 # ══════════════════════════════════════════════════════════
 BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
 
-ML_READY   = False   # flips to True if the .pkl file loads successfully
+ML_READY   = False
 model      = None
-label_encoders = {}  # built in-code; no separate encoder .pkl needed
+label_encoders = {}
 MODEL_NAME = 'Mock'
 
-# ── Categorical vocabulary (must match training data) ──────
-# Sorted alphabetically so sklearn LabelEncoder produces the
-# same integer mapping that was used during training.
 _AIRLINE_CODES = sorted([
     '9E','AA','AS','B6','DL','EV','F9','HA',
     'MQ','NK','OO','UA','VX','WN','YX'
 ])
-_AIRPORT_CODES = sorted([
+_AIRPORT_CODES = sorted(set([
     'ATL','BOS','CLT','DEN','DFW','DTW','EWR',
     'IAH','JFK','LAS','LAX','LGA','MCO','MIA',
-    'MSP','ORD','PHX','SEA','SFO','SEA'
-])
-# Deduplicate while preserving sort
-_AIRPORT_CODES = sorted(set(_AIRPORT_CODES))
+    'MSP','ORD','PHX','PHL','SEA','SFO'
+]))
 _TIME_PERIODS  = sorted(['afternoon','evening','late_night','morning'])
 
 
 def _build_label_encoders():
-    """
-    Build sklearn LabelEncoders for the four categorical features
-    the regressor expects as integer codes.
-    """
     try:
         from sklearn.preprocessing import LabelEncoder
         for col, vocab in [
@@ -81,7 +73,6 @@ try:
     import joblib
     import pandas as pd
 
-    # Look for the model in ./model/ first, then in the same directory
     _candidates = [
         os.path.join(BASE_DIR, 'model', 'flight_delay_regressor.pkl'),
         os.path.join(BASE_DIR, 'flight_delay_regressor.pkl'),
@@ -101,76 +92,37 @@ try:
         print(f"✅ ML model loaded: {MODEL_NAME}")
         print(f"   Path: {_model_path}")
     else:
-        print("⚠️  scikit-learn not installed — label encoders unavailable; "
-              "falling back to Mock mode")
+        print("⚠️  scikit-learn not installed — falling back to Mock mode")
 
 except FileNotFoundError as e:
     print(f"⚠️  {e}")
-    print("   Place flight_delay_regressor.pkl in model/ (or same folder) "
-          "to enable real predictions")
+    print("   Place flight_delay_regressor.pkl in model/ to enable real predictions")
 except ImportError as e:
     print(f"⚠️  Missing package: {e} — running in Mock mode")
-    print("   Run: pip install joblib scikit-learn lightgbm pandas numpy")
 except Exception as e:
     print(f"⚠️  Model load error: {e} — running in Mock mode")
 
 
-# ── helper: safe label-encode a single value ───────────────
 def _encode(col: str, value: str) -> int:
-    """
-    Return integer code for a categorical value.
-    Falls back gracefully to 0 for unseen labels so a missing
-    airline/airport code never crashes the prediction.
-    """
     le = label_encoders.get(col)
     if le is None:
         return 0
     try:
         return int(le.transform([str(value)])[0])
     except ValueError:
-        # Unseen label — use the first known class as a safe default
         return 0
 
 
-# ── helper: delay-minutes → delay-probability ──────────────
 def _minutes_to_prob(predicted_minutes: float) -> float:
-    """
-    Convert the regressor's predicted arrival-delay (in minutes)
-    to a [0, 1] delay-probability using a logistic function
-    centred at 15 min (the industry-standard "delayed" threshold).
-
-      prob ≈ 0.09  when predicted_minutes = -30   (clearly early)
-      prob ≈ 0.27  when predicted_minutes =   0   (right on time)
-      prob = 0.50  when predicted_minutes =  15   (at the threshold)
-      prob ≈ 0.69  when predicted_minutes =  30   (half-hour late)
-      prob ≈ 0.88  when predicted_minutes =  60   (severely late)
-    """
     return round(1.0 / (1.0 + math.exp(-(predicted_minutes - 15.0) / 20.0)), 4)
 
 
 # ══════════════════════════════════════════════════════════
 # PREDICTION FUNCTION
-# Uses real model if loaded, falls back to mock automatically
 # ══════════════════════════════════════════════════════════
 def predict_delay(airline, origin, destination, month,
                   day_of_week, scheduled_departure_hhmm,
                   departure_delay, distance, scheduled_time):
-    """
-    Main prediction function.
-    Returns real ML prediction if the regressor is loaded,
-    otherwise returns a rule-based mock prediction seamlessly.
-
-    Return dict keys
-    ────────────────
-    is_delayed        bool   — True if likely delayed
-    delay_probability float  — [0, 1] probability of delay
-    predicted_delay_min float — raw regressor output (minutes), or None
-    risk_level        str   — 'Low' / 'Medium' / 'High'
-    departure_hour    int
-    time_period       str
-    model_name        str
-    message           str
-    """
     dep_hour = int(str(scheduled_departure_hhmm).zfill(4)[:2]) \
                if scheduled_departure_hhmm else 12
 
@@ -179,7 +131,6 @@ def predict_delay(airline, origin, destination, month,
     elif dep_hour < 18: time_period = 'afternoon'
     else:               time_period = 'evening'
 
-    # ── REAL MODEL PATH ────────────────────────────────────
     if ML_READY:
         try:
             row = pd.DataFrame([{
@@ -197,7 +148,7 @@ def predict_delay(airline, origin, destination, month,
 
             predicted_minutes = float(model.predict(row)[0])
             prob = _minutes_to_prob(predicted_minutes)
-            pred = prob >= 0.50                         # delayed if ≥50%
+            pred = prob >= 0.50
             risk = ('Low'    if prob < 0.35 else
                     'Medium' if prob < 0.65 else 'High')
 
@@ -219,13 +170,13 @@ def predict_delay(airline, origin, destination, month,
         except Exception as e:
             print(f"⚠️  Prediction error: {e} — falling back to mock")
 
-    # ── MOCK FALLBACK PATH ─────────────────────────────────
+    # ── MOCK FALLBACK ──────────────────────────────────────
     base_prob = 0.28
-    if dep_hour >= 18:                 base_prob += 0.20
-    if dep_hour >= 21:                 base_prob += 0.10
-    if float(departure_delay) > 0:     base_prob += 0.25
-    if month in [7, 12, 1]:           base_prob += 0.10
-    if day_of_week in [5, 1]:         base_prob += 0.05
+    if dep_hour >= 18:              base_prob += 0.20
+    if dep_hour >= 21:              base_prob += 0.10
+    if float(departure_delay) > 0: base_prob += 0.25
+    if month in [7, 12, 1]:        base_prob += 0.10
+    if day_of_week in [5, 1]:      base_prob += 0.05
 
     prob = round(min(max(base_prob + random.uniform(-0.05, 0.05), 0.05), 0.95), 4)
     pred = prob >= 0.5
@@ -246,31 +197,159 @@ def predict_delay(airline, origin, destination, month,
     }
 
 
+# ══════════════════════════════════════════════════════════
+# SYNC FUNCTION - Adds predicted flights to database
+# ══════════════════════════════════════════════════════════
+def sync_flight_to_database(flight_no, airline, flight_date, scheduled_departure, 
+                             departure_delay, scheduled_time, is_delayed):
+    """Sync predicted flight to weekly_flight_record and update aggregates"""
+    try:
+        conn = get_db()
+        
+        # Get airline_id
+        airline_row = query_one(conn, "SELECT airline_id FROM airline WHERE iata_code = %s", (airline,))
+        if not airline_row:
+            print(f"⚠️ Airline {airline} not found")
+            return
+        
+        airline_id = airline_row['airline_id']
+        
+        # Check if flight already exists for this date
+        existing = query_one(conn, """
+            SELECT record_id FROM weekly_flight_record 
+            WHERE flight_number = %s AND flight_date = %s
+        """, (flight_no, flight_date))
+        
+        if not existing:
+            # Insert the flight record
+            execute(conn, """
+                INSERT INTO weekly_flight_record 
+                (flight_number, airline_id, flight_date, scheduled_departure, 
+                 departure_delay_min, arrival_delay_min, is_delayed, scheduled_time, is_cancelled)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 0)
+            """, (
+                flight_no, airline_id, flight_date, scheduled_departure,
+                float(departure_delay) if departure_delay else 0,
+                float(departure_delay) if departure_delay else 0,
+                1 if is_delayed else 0,
+                float(scheduled_time) if scheduled_time else 120
+            ))
+            commit(conn)
+            print(f"✅ Synced flight {flight_no} on {flight_date} to database")
+            
+            # Update flight_aggregate
+            update_flight_aggregate(conn, flight_no, airline_id, flight_date)
+        else:
+            print(f"ℹ️ Flight {flight_no} on {flight_date} already exists in database")
+        
+        close(conn)
+    except Exception as e:
+        print(f"⚠️ Failed to sync flight: {e}")
+
+
+def update_flight_aggregate(conn, flight_no, airline_id, flight_date):
+    """Recalculate and update aggregate for a flight"""
+    try:
+        cursor = conn.cursor()
+        
+        # Get all records for this flight
+        cursor.execute("""
+            SELECT 
+                COUNT(*) as total_flights,
+                SUM(is_delayed) as total_delayed,
+                SUM(CASE WHEN is_delayed = 0 THEN 1 ELSE 0 END) as total_on_time,
+                AVG(is_delayed) * 100 as delay_rate,
+                AVG(CASE WHEN arrival_delay_min > 0 THEN arrival_delay_min ELSE 0 END) as avg_delay_minutes
+            FROM weekly_flight_record
+            WHERE flight_number = %s
+        """, (flight_no,))
+        
+        agg_data = cursor.fetchone()
+        
+        if agg_data and agg_data[0] > 0:
+            # Get the latest flight date for week calculation
+            cursor.execute("""
+                SELECT flight_date FROM weekly_flight_record 
+                WHERE flight_number = %s 
+                ORDER BY flight_date DESC LIMIT 1
+            """, (flight_no,))
+            latest_date = cursor.fetchone()[0]
+            
+            # Insert or update aggregate
+            cursor.execute("""
+                INSERT INTO flight_aggregate 
+                (flight_number, airline_id, week_start_date, week_end_date,
+                 total_flights, total_delayed, total_on_time, delay_rate, avg_delay_minutes)
+                VALUES (%s, %s, 
+                        DATE_SUB(%s, INTERVAL WEEKDAY(%s) DAY),
+                        DATE_ADD(DATE_SUB(%s, INTERVAL WEEKDAY(%s) DAY), INTERVAL 6 DAY),
+                        %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    total_flights = VALUES(total_flights),
+                    total_delayed = VALUES(total_delayed),
+                    total_on_time = VALUES(total_on_time),
+                    delay_rate = VALUES(delay_rate),
+                    avg_delay_minutes = VALUES(avg_delay_minutes)
+            """, (
+                flight_no, airline_id,
+                latest_date, latest_date, latest_date, latest_date,
+                agg_data[0], agg_data[1], agg_data[2], agg_data[3], agg_data[4] or 0
+            ))
+            conn.commit()
+            print(f"✅ Updated aggregate for flight {flight_no}")
+        
+        cursor.close()
+    except Exception as e:
+        print(f"⚠️ Failed to update aggregate: {e}")
+
+
 # ── API SUPPORT ──────────────────────────────────────────────
 API_CALL_COUNTER = 0
 API_LAST_CALL = None
 
-_AIRPORT_COORDINATES = {
-    'ATL': (33.6407, -84.4277),
-    'BOS': (42.3656, -71.0096),
-    'CLT': (35.2144, -80.9473),
-    'DEN': (39.8561, -104.6737),
-    'DFW': (32.8998, -97.0403),
-    'DTW': (42.2162, -83.3554),
-    'EWR': (40.6895, -74.1745),
-    'IAH': (29.9902, -95.3368),
-    'JFK': (40.6413, -73.7781),
-    'LAS': (36.0840, -115.1537),
-    'LAX': (33.9416, -118.4085),
-    'LGA': (40.7769, -73.8740),
-    'MCO': (28.4312, -81.3081),
-    'MIA': (25.7959, -80.2870),
-    'MSP': (44.8848, -93.2223),
-    'ORD': (41.9742, -87.9073),
-    'PHX': (33.4353, -112.0058),
-    'SEA': (47.4502, -122.3088),
-    'SFO': (37.6213, -122.3790),
+_AIRPORT_COORDINATES_FALLBACK = {
+    'ATL': (33.6407, -84.4277),  'BOS': (42.3656, -71.0096),
+    'CLT': (35.2144, -80.9473),  'DEN': (39.8561,-104.6737),
+    'DFW': (32.8998, -97.0403),  'DTW': (42.2162, -83.3554),
+    'EWR': (40.6895, -74.1745),  'IAH': (29.9902, -95.3368),
+    'JFK': (40.6413, -73.7781),  'LAS': (36.0840,-115.1537),
+    'LAX': (33.9416,-118.4085),  'LGA': (40.7769, -73.8740),
+    'MCO': (28.4312, -81.3081),  'MIA': (25.7959, -80.2870),
+    'MSP': (44.8848, -93.2223),  'ORD': (41.9742, -87.9073),
+    'PHX': (33.4353,-112.0058),  'PHL': (39.8721, -75.2437),
+    'SEA': (47.4502,-122.3088),  'SFO': (37.6213,-122.3790),
 }
+
+_coord_cache: dict = {}
+
+
+def _get_airport_coords(iata_code: str):
+    if not iata_code:
+        return None
+    iata_code = iata_code.upper()
+
+    if iata_code in _coord_cache:
+        return _coord_cache[iata_code]
+
+    try:
+        conn = get_db()
+        row = query_one(
+            conn,
+            "SELECT latitude, longitude FROM airport WHERE iata_code = ?",
+            (iata_code,)
+        )
+        close(conn)
+        if row and row.get('latitude') is not None and row.get('longitude') is not None:
+            coords = (float(row['latitude']), float(row['longitude']))
+            _coord_cache[iata_code] = coords
+            return coords
+    except Exception:
+        pass
+
+    coords = _AIRPORT_COORDINATES_FALLBACK.get(iata_code)
+    if coords:
+        _coord_cache[iata_code] = coords
+    return coords
 
 
 def increment_api_counter(provider, endpoint, success=True, note=None):
@@ -311,8 +390,8 @@ def _get_hhmm_from_datetime(value):
 def _distance_between_airports(origin, destination):
     if not origin or not destination:
         return None
-    coords_a = _AIRPORT_COORDINATES.get(origin)
-    coords_b = _AIRPORT_COORDINATES.get(destination)
+    coords_a = _get_airport_coords(origin)
+    coords_b = _get_airport_coords(destination)
     if not coords_a or not coords_b:
         return None
 
@@ -321,7 +400,9 @@ def _distance_between_airports(origin, destination):
     radius = 3959.0
     dlat = math.radians(lat2 - lat1)
     dlon = math.radians(lon2 - lon1)
-    a = math.sin(dlat/2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2) ** 2
+    a = (math.sin(dlat/2) ** 2 +
+         math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) *
+         math.sin(dlon/2) ** 2)
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return int(round(radius * c))
 
@@ -369,9 +450,9 @@ def lookup_with_aviationstack(flight_no, flight_date=None):
     departure = flight.get('departure', {}) or {}
     arrival = flight.get('arrival', {}) or {}
 
-    sched_dep_dt = _parse_iso_datetime(departure.get('scheduled'))
+    sched_dep_dt  = _parse_iso_datetime(departure.get('scheduled'))
     actual_dep_dt = _parse_iso_datetime(departure.get('actual'))
-    sched_arr_dt = _parse_iso_datetime(arrival.get('scheduled'))
+    sched_arr_dt  = _parse_iso_datetime(arrival.get('scheduled'))
 
     scheduled_departure = _get_hhmm_from_datetime(sched_dep_dt)
     scheduled_time = None
@@ -494,12 +575,38 @@ def check_password(password, stored):
         return False
 
 
+# ── VALIDATION HELPERS ──────────────────────────────────────
+_EMAIL_RE    = re.compile(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$')
+_USERNAME_RE = re.compile(r'^[a-zA-Z0-9_]+$')
+
+def validate_email(email: str) -> tuple[bool, str | None]:
+    if not email:
+        return False, "Email is required."
+    if not _EMAIL_RE.match(email):
+        return False, "Enter a valid email address."
+    return True, None
+
+def validate_password(password: str) -> tuple[bool, str | None]:
+    if len(password) < 8:
+        return False, "Password must be at least 8 characters."
+    if not any(c.isupper() for c in password):
+        return False, "Password must contain at least one uppercase letter."
+    if not any(c.isdigit() for c in password):
+        return False, "Password must contain at least one number."
+    return True, None
+
+def validate_username(username: str) -> tuple[bool, str | None]:
+    if len(username) < 3:
+        return False, "Username must be at least 3 characters."
+    if len(username) > 30:
+        return False, "Username must be 30 characters or fewer."
+    if not _USERNAME_RE.match(username):
+        return False, "Username can only contain letters, numbers, and underscores."
+    return True, None
+
+
 # ── DATE HELPER ─────────────────────────────────────────────
 def format_date(value):
-    """
-    Safely format a date/datetime whether it comes as a Python
-    datetime object or a MySQL string.  Returns e.g. 'Jan 2024'
-    """
     if not value:
         return 'N/A'
     if isinstance(value, str):
@@ -596,7 +703,7 @@ def inject_api_debug():
 
 @app.route('/lookup-flight')
 def lookup_flight():
-    flight_no = request.args.get('flight_no', '').strip().upper()
+    flight_no   = request.args.get('flight_no', '').strip().upper()
     flight_date = request.args.get('flight_date')
     if not flight_no:
         return jsonify({'ok': False, 'message': 'flight_no query parameter is required'}), 400
@@ -633,7 +740,9 @@ def predict():
         dep_delay   = form.get('departure_delay', '').strip() or None
         sched_time  = form.get('scheduled_time', '').strip() or None
 
-        if flight_no and (not airline or not origin or not destination or not flight_date or not sched_dep or not distance or not sched_time):
+        if flight_no and (not airline or not origin or not destination
+                          or not flight_date or not sched_dep
+                          or not distance or not sched_time):
             lookup = lookup_flight_details(flight_no, flight_date)
             if lookup:
                 airline     = airline or (lookup.get('airline') or airline)
@@ -693,7 +802,17 @@ def predict():
             'lookup':              api_lookup,
         })
 
-        # ── Historical stats from DB; fall back to mock ────
+        # ── SYNC TO DATABASE ──
+        sync_flight_to_database(
+            flight_no=flight_no,
+            airline=airline,
+            flight_date=flight_date,
+            scheduled_departure=formatted_sched_dep or '12:00',
+            departure_delay=dep_delay,
+            scheduled_time=sched_time,
+            is_delayed=prediction['is_delayed']
+        )
+
         history_data = None
         try:
             conn = get_db()
@@ -701,7 +820,7 @@ def predict():
                 SELECT total_flights, total_on_time, total_delayed,
                        delay_rate, avg_delay_minutes
                 FROM   flight_aggregate
-                WHERE  flight_number = ?
+                WHERE  flight_number = %s
                 ORDER  BY week_start_date DESC
                 LIMIT  1
             """, (flight_no,))
@@ -721,7 +840,6 @@ def predict():
             }
         prediction['history'] = history_data
 
-        # ── Persist to DB if user is logged in ────────────
         prediction_id = None
         if session.get('user_id'):
             conn = None
@@ -733,7 +851,7 @@ def predict():
                       (user_id, flight_number, predicted_for_date,
                        delay_probability, risk_level,
                        predicted_delayed, predicted_at)
-                    VALUES (?,?,?,?,?,?,?)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """, (uid, flight_no, flight_date,
                       prediction['delay_probability'],
                       prediction['risk_level'],
@@ -743,7 +861,7 @@ def predict():
                     INSERT INTO search_history
                       (user_id, flight_number, search_date,
                        queried_flight_date, searched_at)
-                    VALUES (?,?,?,?,?)
+                    VALUES (%s, %s, %s, %s, %s)
                 """, (uid, flight_no,
                       str(date.today()), flight_date,
                       str(datetime.utcnow())))
@@ -771,38 +889,241 @@ def predict():
 # ── DASHBOARD ───────────────────────────────────────────────
 @app.route('/dashboard')
 def dashboard():
-    stats = {
-        'total_flights':  1284,
-        'delay_rate':     38.4,
-        'avg_delay':      34,
-        'model_accuracy': 78,
-    }
-    chart_data = {
-        'airline': {
-            'labels': ['AA', 'DL', 'UA', 'WN', 'B6', 'AS', 'NK', 'F9', 'HA', 'VX'],
-            'values': [42, 35, 48, 29, 38, 31, 55, 52, 22, 36],
-        },
-        'hour': {
-            'labels': [f"{h}:00" for h in range(0, 24)],
-            'values': [18, 15, 12, 10, 11, 14, 19, 25, 28, 30,
-                       32, 34, 35, 36, 38, 40, 42, 45, 48, 50,
-                       47, 44, 38, 28],
-        },
-        'month': {
-            'labels': ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-                       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
-            'values': [45, 38, 35, 32, 36, 40, 52, 48, 34, 30, 35, 50],
-        },
-        'day': {
-            'labels': ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
-            'values': [35, 42, 34, 33, 38, 48, 30],
-        },
-    }
+    """Dynamic dashboard with real database data"""
+    
+    # Get filter parameters
+    airline_filter = request.args.get('airline', 'ALL')
+    month_filter = request.args.get('month', '0')
+    
+    print(f"Dashboard filters - Airline: {airline_filter}, Month: {month_filter}")
+    
+    try:
+        conn = get_db()
+        
+        # Build WHERE clauses
+        where_parts = []
+        params = []
+        
+        if airline_filter != 'ALL':
+            where_parts.append("a.iata_code = %s")
+            params.append(airline_filter)
+        
+        if month_filter != '0':
+            where_parts.append("MONTH(wfr.flight_date) = %s")
+            params.append(month_filter)
+        
+        where_clause = " AND ".join(where_parts) if where_parts else "1=1"
+        
+        # ── STATS (Filtered) ─────────────────────────────
+        stats_query = f"""
+            SELECT 
+                COUNT(*) as total_flights,
+                COALESCE(AVG(wfr.is_delayed), 0) * 100 as delay_rate,
+                COALESCE(AVG(CASE WHEN wfr.arrival_delay_min > 0 THEN wfr.arrival_delay_min ELSE NULL END), 0) as avg_delay
+            FROM weekly_flight_record wfr
+            JOIN airline a ON wfr.airline_id = a.airline_id
+            WHERE {where_clause}
+        """
+        
+        stats_row = query_one(conn, stats_query, params if params else None)
+        
+        # Model accuracy (from user feedback)
+        accuracy_row = query_one(conn, """
+            SELECT 
+                COUNT(*) as total_feedback,
+                COALESCE(AVG(CASE 
+                    WHEN predicted_delayed = actual_delayed THEN 1 
+                    ELSE 0 
+                END), 0.78) * 100 as accuracy
+            FROM prediction_log
+            WHERE actual_delayed IS NOT NULL
+        """)
+        
+        stats = {
+            'total_flights': int(stats_row['total_flights']) if stats_row and stats_row['total_flights'] else 0,
+            'delay_rate': round(stats_row['delay_rate'], 1) if stats_row else 0,
+            'avg_delay': int(stats_row['avg_delay']) if stats_row else 0,
+            'model_accuracy': round(accuracy_row['accuracy'], 0) if accuracy_row else 78,
+        }
+        
+        # ── CHART 1: Delay by Airline ────────────────────
+        chart_where = "1=1"
+        if month_filter != '0':
+            chart_where = f"MONTH(wfr.flight_date) = {month_filter}"
+        
+        airline_query = f"""
+            SELECT 
+                a.iata_code as airline,
+                COALESCE(AVG(wfr.is_delayed), 0) * 100 as delay_rate
+            FROM weekly_flight_record wfr
+            JOIN airline a ON wfr.airline_id = a.airline_id
+            WHERE {chart_where}
+            GROUP BY a.iata_code
+            ORDER BY delay_rate DESC
+            LIMIT 10
+        """
+        
+        airline_rows = query(conn, airline_query)
+        chart_airline = {
+            'labels': [row['airline'] for row in airline_rows],
+            'values': [round(row['delay_rate'], 1) for row in airline_rows]
+        } if airline_rows else {'labels': [], 'values': []}
+        
+        # ── CHART 2: Delay by Hour ───────────────────────
+        hour_where = "1=1"
+        hour_params = []
+        
+        if airline_filter != 'ALL':
+            hour_where = "a.iata_code = %s"
+            hour_params.append(airline_filter)
+        
+        hour_query = f"""
+            SELECT 
+                HOUR(wfr.scheduled_departure) as hour,
+                COALESCE(AVG(wfr.is_delayed), 0) * 100 as delay_rate
+            FROM weekly_flight_record wfr
+            JOIN airline a ON wfr.airline_id = a.airline_id
+            WHERE {hour_where}
+            GROUP BY HOUR(wfr.scheduled_departure)
+            ORDER BY hour
+        """
+        
+        hour_rows = query(conn, hour_query, hour_params if hour_params else None)
+        chart_hour = {
+            'labels': [f"{row['hour']}:00" for row in hour_rows],
+            'values': [round(row['delay_rate'], 1) for row in hour_rows]
+        } if hour_rows else {'labels': [], 'values': []}
+        
+        # ── CHART 3: Delay by Month ──────────────────────
+        month_where = "1=1"
+        month_params = []
+        
+        if airline_filter != 'ALL':
+            month_where = "a.iata_code = %s"
+            month_params.append(airline_filter)
+        
+        month_query = f"""
+            SELECT 
+                MONTH(wfr.flight_date) as month_num,
+                COALESCE(AVG(wfr.is_delayed), 0) * 100 as delay_rate
+            FROM weekly_flight_record wfr
+            JOIN airline a ON wfr.airline_id = a.airline_id
+            WHERE {month_where}
+            GROUP BY MONTH(wfr.flight_date)
+            ORDER BY month_num
+        """
+        
+        month_rows = query(conn, month_query, month_params if month_params else None)
+        month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+                      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+        
+        chart_month = {
+            'labels': [month_names[row['month_num']-1] for row in month_rows],
+            'values': [round(row['delay_rate'], 1) for row in month_rows]
+        } if month_rows else {'labels': [], 'values': []}
+        
+        # ── CHART 4: Delay by Day of Week ────────────────
+        day_query = f"""
+            SELECT 
+                DAYOFWEEK(wfr.flight_date) as dow,
+                COALESCE(AVG(wfr.is_delayed), 0) * 100 as delay_rate
+            FROM weekly_flight_record wfr
+            JOIN airline a ON wfr.airline_id = a.airline_id
+            WHERE {month_where}
+            GROUP BY DAYOFWEEK(wfr.flight_date)
+            ORDER BY dow
+        """
+        
+        day_rows = query(conn, day_query, month_params if month_params else None)
+        day_names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+        
+        chart_day = {
+            'labels': [day_names[row['dow']-1] for row in day_rows],
+            'values': [round(row['delay_rate'], 1) for row in day_rows]
+        } if day_rows else {'labels': [], 'values': []}
+        
+        # ── TOP ROUTES ────────────────────────────────────
+        top_routes = [
+            {'origin': 'LAX', 'destination': 'JFK', 'delay_rate': 68},
+            {'origin': 'ORD', 'destination': 'LGA', 'delay_rate': 62},
+            {'origin': 'SFO', 'destination': 'LAX', 'delay_rate': 57},
+            {'origin': 'ATL', 'destination': 'ORD', 'delay_rate': 54},
+            {'origin': 'DFW', 'destination': 'LAX', 'delay_rate': 51},
+            {'origin': 'JFK', 'destination': 'BOS', 'delay_rate': 49},
+            {'origin': 'MIA', 'destination': 'JFK', 'delay_rate': 47},
+            {'origin': 'DEN', 'destination': 'ORD', 'delay_rate': 44},
+            {'origin': 'SEA', 'destination': 'SFO', 'delay_rate': 42},
+            {'origin': 'LAS', 'destination': 'LAX', 'delay_rate': 38},
+        ]
+        
+        close(conn)
+        
+        chart_data = {
+            'airline': chart_airline if chart_airline['labels'] else {
+                'labels': ['AA', 'DL', 'UA', 'WN', 'B6', 'AS', 'NK', 'F9', 'HA', 'VX'],
+                'values': [42, 35, 48, 29, 38, 31, 55, 52, 22, 36]
+            },
+            'hour': chart_hour if chart_hour['labels'] else {
+                'labels': [f"{h}:00" for h in range(6, 22)],
+                'values': [18, 15, 12, 10, 11, 14, 19, 25, 28, 30, 32, 34, 35, 36, 38, 40]
+            },
+            'month': chart_month if chart_month['labels'] else {
+                'labels': ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
+                'values': [45, 38, 35, 32, 36, 40, 52, 48, 34, 30, 35, 50]
+            },
+            'day': chart_day if chart_day['labels'] else {
+                'labels': ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+                'values': [35, 42, 34, 33, 38, 48, 30]
+            },
+        }
+        
+    except Exception as e:
+        print(f"Dashboard error: {e}")
+        import traceback
+        traceback.print_exc()
+        # Fallback to static data if database query fails
+        stats = {
+            'total_flights': 1284,
+            'delay_rate': 38.4,
+            'avg_delay': 34,
+            'model_accuracy': 78,
+        }
+        chart_data = {
+            'airline': {
+                'labels': ['AA', 'DL', 'UA', 'WN', 'B6', 'AS', 'NK', 'F9', 'HA', 'VX'],
+                'values': [42, 35, 48, 29, 38, 31, 55, 52, 22, 36],
+            },
+            'hour': {
+                'labels': [f"{h}:00" for h in range(0, 24)],
+                'values': [18, 15, 12, 10, 11, 14, 19, 25, 28, 30,
+                          32, 34, 35, 36, 38, 40, 42, 45, 48, 50,
+                          47, 44, 38, 28],
+            },
+            'month': {
+                'labels': ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                           'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
+                'values': [45, 38, 35, 32, 36, 40, 52, 48, 34, 30, 35, 50],
+            },
+            'day': {
+                'labels': ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+                'values': [35, 42, 34, 33, 38, 48, 30],
+            },
+        }
+        top_routes = [
+            {'origin': 'LAX', 'destination': 'JFK', 'delay_rate': 68},
+            {'origin': 'ORD', 'destination': 'LGA', 'delay_rate': 62},
+            {'origin': 'SFO', 'destination': 'LAX', 'delay_rate': 57},
+            {'origin': 'ATL', 'destination': 'ORD', 'delay_rate': 54},
+            {'origin': 'DFW', 'destination': 'LAX', 'delay_rate': 51},
+        ]
+    
     return render_template('dashboard.html',
                            stats=stats,
                            chart_data=chart_data,
-                           top_routes=MOCK_TOP_ROUTES,
-                           airlines=get_airlines())
+                           top_routes=top_routes,
+                           airlines=get_airlines(),
+                           current_airline=airline_filter,
+                           current_month=month_filter)
 
 
 # ── COMPARE ─────────────────────────────────────────────────
@@ -831,11 +1152,12 @@ def compare():
 
         for fn, code, name, dep, dur in sample_flights:
             hhmm = int(dep.replace(':', ''))
+            dist = _distance_between_airports(origin, destination) or 2475
             pred = predict_delay(
                 airline=code, origin=origin, destination=destination,
                 month=mon, day_of_week=dow,
                 scheduled_departure_hhmm=hhmm,
-                departure_delay=0, distance=2475,
+                departure_delay=0, distance=dist,
                 scheduled_time=dur
             )
             flights.append({
@@ -866,6 +1188,15 @@ def login():
     if request.method == 'POST':
         email    = request.form.get('email', '').strip().lower()
         password = request.form.get('password', '')
+
+        ok, err = validate_email(email)
+        if not ok:
+            flash(err, 'error')
+            return redirect(url_for('login'))
+        if not password:
+            flash('Password is required.', 'error')
+            return redirect(url_for('login'))
+
         try:
             conn = get_db()
             user = query_one(conn,
@@ -894,10 +1225,31 @@ def login():
 # ── REGISTER ─────────────────────────────────────────────────
 @app.route('/register', methods=['POST'])
 def register():
-    username = request.form.get('username', '').strip()
-    email    = request.form.get('email', '').strip().lower()
-    password = request.form.get('password', '')
-    pw_hash  = hash_password(password)
+    username        = request.form.get('username', '').strip()
+    email           = request.form.get('email', '').strip().lower()
+    password        = request.form.get('password', '')
+    confirm_password = request.form.get('confirm_password', '')
+
+    ok, err = validate_username(username)
+    if not ok:
+        flash(err, 'error')
+        return redirect(url_for('login') + '?tab=register')
+
+    ok, err = validate_email(email)
+    if not ok:
+        flash(err, 'error')
+        return redirect(url_for('login') + '?tab=register')
+
+    ok, err = validate_password(password)
+    if not ok:
+        flash(err, 'error')
+        return redirect(url_for('login') + '?tab=register')
+
+    if password != confirm_password:
+        flash('Passwords do not match.', 'error')
+        return redirect(url_for('login') + '?tab=register')
+
+    pw_hash = hash_password(password)
 
     try:
         conn = get_db()
@@ -912,10 +1264,10 @@ def register():
         return redirect(url_for('profile'))
     except Exception as e:
         if 'Duplicate' in str(e) or 'UNIQUE' in str(e):
-            flash('Email already registered. Please sign in.', 'error')
+            flash('That email is already registered. Please sign in instead.', 'error')
         else:
             flash('Registration error: ' + str(e), 'error')
-        return redirect(url_for('login'))
+        return redirect(url_for('login') + '?tab=register')
 
 
 # ── LOGOUT ───────────────────────────────────────────────────
@@ -923,6 +1275,46 @@ def register():
 def logout():
     session.clear()
     return redirect(url_for('index'))
+
+
+# ── DELETE ACCOUNT ───────────────────────────────────────────
+@app.route('/delete-account', methods=['POST'])
+def delete_account():
+    if not session.get('user_id'):
+        flash('Please sign in first.', 'info')
+        return redirect(url_for('login'))
+
+    password = request.form.get('password', '')
+    uid      = int(session['user_id'])
+
+    if not password:
+        flash('Password is required to delete your account.', 'error')
+        return redirect(url_for('profile'))
+
+    try:
+        conn = get_db()
+        user = query_one(conn, "SELECT * FROM user WHERE user_id = ?", (uid,))
+        close(conn)
+
+        if not user or not check_password(password, user['password_hash']):
+            flash('Incorrect password. Account was NOT deleted.', 'error')
+            return redirect(url_for('profile'))
+
+        conn = get_db()
+        execute(conn, "DELETE FROM user_feedback   WHERE user_id = ?", (uid,))
+        execute(conn, "DELETE FROM prediction_log  WHERE user_id = ?", (uid,))
+        execute(conn, "DELETE FROM search_history  WHERE user_id = ?", (uid,))
+        execute(conn, "DELETE FROM user            WHERE user_id = ?", (uid,))
+        commit(conn)
+        close(conn)
+
+        session.clear()
+        flash('Your account has been permanently deleted. Sorry to see you go.', 'info')
+        return redirect(url_for('index'))
+
+    except Exception as e:
+        flash('Error deleting account: ' + str(e), 'error')
+        return redirect(url_for('profile'))
 
 
 # ── PROFILE ──────────────────────────────────────────────────
@@ -963,9 +1355,6 @@ def profile():
             logger.exception("profile: user query failed (user_id=%s)", uid)
 
         try:
-            # One prediction per search row: same flight+date can appear many times in
-            # prediction_log; a plain join multiplies rows (e.g. 3 searches -> 9 rows).
-            # Pick the latest prediction at or before this search's timestamp.
             history = query(conn, """
                 SELECT sh.flight_number,
                        sh.queried_flight_date,

@@ -64,21 +64,6 @@
   .auth-form { display: flex; flex-direction: column; gap: 16px; }
   .auth-form .form-group { gap: 6px; }
 
-  .auth-divider {
-    text-align: center;
-    position: relative;
-    margin: 8px 0;
-  }
-  .auth-divider::before {
-    content: '';
-    position: absolute; top: 50%; left: 0; right: 0;
-    height: 1px; background: var(--border);
-  }
-  .auth-divider span {
-    position: relative; background: var(--surface);
-    padding: 0 12px; font-size: 12px; color: var(--text-tertiary);
-  }
-
   .auth-submit {
     width: 100%;
     padding: 14px;
@@ -88,14 +73,57 @@
     border: none; cursor: pointer;
     transition: var(--transition);
     font-family: var(--font-body);
+    margin-top: 4px;
   }
   .auth-submit:hover { background: #1a7fcf; }
+  .auth-submit:disabled { opacity: 0.55; cursor: not-allowed; }
 
   .auth-footer {
     text-align: center; margin-top: 20px;
     font-size: 13px; color: var(--text-tertiary);
   }
   .auth-footer a { color: var(--accent); }
+
+  /* ── Inline field error ─────────────────────────────── */
+  .field-error {
+    font-size: 12px; color: var(--red);
+    margin-top: 5px; display: none;
+  }
+  .form-input.invalid, .form-select.invalid {
+    border-color: var(--red) !important;
+    box-shadow: 0 0 0 3px rgba(255,69,58,0.18) !important;
+  }
+  .form-input.valid {
+    border-color: var(--green) !important;
+  }
+
+  /* ── Password strength bar ──────────────────────────── */
+  .pw-strength-wrap { margin-top: 8px; }
+  .pw-strength-track {
+    height: 4px; background: var(--bg-4);
+    border-radius: 2px; overflow: hidden;
+  }
+  .pw-strength-fill {
+    height: 100%; border-radius: 2px;
+    transition: width 0.3s ease, background 0.3s ease;
+    width: 0%;
+  }
+  .pw-strength-label {
+    font-size: 11px; color: var(--text-tertiary);
+    margin-top: 5px;
+  }
+
+  /* ── Password visibility toggle ─────────────────────── */
+  .pw-wrap { position: relative; }
+  .pw-wrap .form-input { padding-right: 44px; }
+  .pw-toggle {
+    position: absolute; right: 14px; top: 50%;
+    transform: translateY(-50%);
+    background: none; border: none;
+    color: var(--text-tertiary); cursor: pointer;
+    font-size: 14px; padding: 0; line-height: 1;
+  }
+  .pw-toggle:hover { color: var(--text-secondary); }
 
   /* Panel visibility */
   #panel-register { display: none; }
@@ -115,52 +143,98 @@
 
     <!-- Tabs -->
     <div class="auth-tabs">
-      <button class="auth-tab active" id="tab-login" onclick="switchTab('login')">Sign in</button>
-      <button class="auth-tab" id="tab-register" onclick="switchTab('register')">Create account</button>
+      <button class="auth-tab active" id="tab-login"    onclick="switchTab('login')">Sign in</button>
+      <button class="auth-tab"        id="tab-register" onclick="switchTab('register')">Create account</button>
     </div>
 
-    <!-- Login Panel -->
+    <!-- ── LOGIN PANEL ──────────────────────────────────── -->
     <div class="auth-card" id="panel-login">
-      <form action="/login" method="POST" class="auth-form">
+      <form action="/login" method="POST" class="auth-form" id="login-form" novalidate>
         <input type="hidden" name="tab" value="login">
+
         <div class="form-group">
           <label class="form-label" for="email-login">Email</label>
           <input type="email" id="email-login" name="email"
                  placeholder="you@example.com"
-                 class="form-input" required>
+                 class="form-input" autocomplete="email" required>
+          <div class="field-error" id="login-email-err">Enter a valid email address.</div>
         </div>
+
         <div class="form-group">
           <label class="form-label" for="password-login">Password</label>
-          <input type="password" id="password-login" name="password"
-                 placeholder="••••••••"
-                 class="form-input" required>
+          <div class="pw-wrap">
+            <input type="password" id="password-login" name="password"
+                   placeholder="••••••••"
+                   class="form-input" autocomplete="current-password" required>
+            <button type="button" class="pw-toggle"
+                    onclick="togglePw('password-login', this)">👁</button>
+          </div>
+          <div class="field-error" id="login-pw-err">Password is required.</div>
         </div>
-        <button type="submit" class="auth-submit">Sign in</button>
+
+        <button type="submit" class="auth-submit" id="login-submit-btn">Sign in</button>
       </form>
     </div>
 
-    <!-- Register Panel -->
+    <!-- ── REGISTER PANEL ──────────────────────────────── -->
     <div class="auth-card" id="panel-register">
-      <form action="/register" method="POST" class="auth-form">
+      <form action="/register" method="POST" class="auth-form" id="register-form" novalidate>
+
         <div class="form-group">
           <label class="form-label" for="username">Username</label>
           <input type="text" id="username" name="username"
                  placeholder="e.g. apa_mestry"
-                 class="form-input" required>
+                 class="form-input"
+                 autocomplete="username"
+                 minlength="3" maxlength="30" required>
+          <div class="field-error" id="reg-user-err">
+            3–30 chars, letters/numbers/underscores only.
+          </div>
         </div>
+
         <div class="form-group">
           <label class="form-label" for="email-reg">Email</label>
           <input type="email" id="email-reg" name="email"
                  placeholder="you@example.com"
-                 class="form-input" required>
+                 class="form-input" autocomplete="email" required>
+          <div class="field-error" id="reg-email-err">Enter a valid email address.</div>
         </div>
+
         <div class="form-group">
           <label class="form-label" for="password-reg">Password</label>
-          <input type="password" id="password-reg" name="password"
-                 placeholder="Min. 8 characters"
-                 class="form-input" minlength="8" required>
+          <div class="pw-wrap">
+            <input type="password" id="password-reg" name="password"
+                   placeholder="Min. 8 characters"
+                   class="form-input" autocomplete="new-password"
+                   minlength="8" required>
+            <button type="button" class="pw-toggle"
+                    onclick="togglePw('password-reg', this)">👁</button>
+          </div>
+          <!-- Strength bar -->
+          <div class="pw-strength-wrap">
+            <div class="pw-strength-track">
+              <div class="pw-strength-fill" id="pw-strength-fill"></div>
+            </div>
+            <div class="pw-strength-label" id="pw-strength-label">Enter a password</div>
+          </div>
+          <div class="field-error" id="reg-pw-err">
+            Must be 8+ chars with one uppercase letter and one number.
+          </div>
         </div>
-        <button type="submit" class="auth-submit">Create account</button>
+
+        <div class="form-group">
+          <label class="form-label" for="confirm-password">Confirm password</label>
+          <div class="pw-wrap">
+            <input type="password" id="confirm-password" name="confirm_password"
+                   placeholder="Re-enter your password"
+                   class="form-input" autocomplete="new-password" required>
+            <button type="button" class="pw-toggle"
+                    onclick="togglePw('confirm-password', this)">👁</button>
+          </div>
+          <div class="field-error" id="reg-confirm-err">Passwords do not match.</div>
+        </div>
+
+        <button type="submit" class="auth-submit" id="register-submit-btn">Create account</button>
       </form>
     </div>
 
@@ -174,7 +248,7 @@
 
 {% block scripts %}
 <script>
-  // Check if URL has ?tab=register
+  /* ── TAB SWITCHING ──────────────────────────────────── */
   const params = new URLSearchParams(window.location.search);
   if (params.get('tab') === 'register') switchTab('register');
 
@@ -185,5 +259,150 @@
     document.getElementById('tab-login').classList.toggle('active', isLogin);
     document.getElementById('tab-register').classList.toggle('active', !isLogin);
   }
+
+  /* ── PASSWORD VISIBILITY TOGGLE ─────────────────────── */
+  function togglePw(inputId, btn) {
+    const input = document.getElementById(inputId);
+    if (input.type === 'password') {
+      input.type = 'text';
+      btn.textContent = '🙈';
+    } else {
+      input.type = 'password';
+      btn.textContent = '👁';
+    }
+  }
+
+  /* ── FIELD HELPERS ───────────────────────────────────── */
+  function setValid(input)   { input.classList.add('valid');   input.classList.remove('invalid'); }
+  function setInvalid(input) { input.classList.add('invalid'); input.classList.remove('valid'); }
+  function clearState(input) { input.classList.remove('valid', 'invalid'); }
+  function showErr(id)  { document.getElementById(id).style.display = 'block'; }
+  function hideErr(id)  { document.getElementById(id).style.display = 'none'; }
+
+  const EMAIL_RE    = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/;
+  const USERNAME_RE = /^[a-zA-Z0-9_]{3,30}$/;
+
+  /* ── PASSWORD STRENGTH ───────────────────────────────── */
+  const strengthFill  = document.getElementById('pw-strength-fill');
+  const strengthLabel = document.getElementById('pw-strength-label');
+
+  function computeStrength(pw) {
+    let score = 0;
+    if (pw.length >= 8)                   score++;
+    if (pw.length >= 12)                  score++;
+    if (/[A-Z]/.test(pw))                 score++;
+    if (/[0-9]/.test(pw))                 score++;
+    if (/[^a-zA-Z0-9]/.test(pw))         score++;
+    return score;   // 0–5
+  }
+
+  document.getElementById('password-reg').addEventListener('input', function() {
+    const pw    = this.value;
+    const score = computeStrength(pw);
+    const pct   = Math.min(score / 5 * 100, 100);
+    const colors = ['', '#ff453a', '#ff9500', '#ffd60a', '#34c759', '#30d158'];
+    const labels = ['', 'Very weak', 'Weak', 'Fair', 'Good', 'Strong'];
+    strengthFill.style.width      = pw.length ? pct + '%' : '0%';
+    strengthFill.style.background = colors[score] || colors[1];
+    strengthLabel.textContent     = pw.length ? labels[score] || 'Very weak' : 'Enter a password';
+    strengthLabel.style.color     = colors[score] || 'var(--text-tertiary)';
+  });
+
+  /* ── LOGIN VALIDATION ────────────────────────────────── */
+  const loginForm = document.getElementById('login-form');
+
+  loginForm.addEventListener('submit', function(e) {
+    let valid = true;
+
+    const email = document.getElementById('email-login');
+    if (!EMAIL_RE.test(email.value.trim())) {
+      setInvalid(email); showErr('login-email-err'); valid = false;
+    } else {
+      setValid(email); hideErr('login-email-err');
+    }
+
+    const pw = document.getElementById('password-login');
+    if (!pw.value) {
+      setInvalid(pw); showErr('login-pw-err'); valid = false;
+    } else {
+      setValid(pw); hideErr('login-pw-err');
+    }
+
+    if (!valid) e.preventDefault();
+  });
+
+  /* ── REGISTER VALIDATION ─────────────────────────────── */
+  const registerForm = document.getElementById('register-form');
+
+  registerForm.addEventListener('submit', function(e) {
+    let valid = true;
+
+    // Username
+    const uname = document.getElementById('username');
+    if (!USERNAME_RE.test(uname.value.trim())) {
+      setInvalid(uname); showErr('reg-user-err'); valid = false;
+    } else {
+      setValid(uname); hideErr('reg-user-err');
+    }
+
+    // Email
+    const email = document.getElementById('email-reg');
+    if (!EMAIL_RE.test(email.value.trim())) {
+      setInvalid(email); showErr('reg-email-err'); valid = false;
+    } else {
+      setValid(email); hideErr('reg-email-err');
+    }
+
+    // Password strength
+    const pw = document.getElementById('password-reg');
+    const pwVal = pw.value;
+    const pwOk = pwVal.length >= 8 && /[A-Z]/.test(pwVal) && /[0-9]/.test(pwVal);
+    if (!pwOk) {
+      setInvalid(pw); showErr('reg-pw-err'); valid = false;
+    } else {
+      setValid(pw); hideErr('reg-pw-err');
+    }
+
+    // Confirm password
+    const confirm = document.getElementById('confirm-password');
+    if (confirm.value !== pw.value || !confirm.value) {
+      setInvalid(confirm); showErr('reg-confirm-err'); valid = false;
+    } else {
+      setValid(confirm); hideErr('reg-confirm-err');
+    }
+
+    if (!valid) {
+      e.preventDefault();
+    } else {
+      document.getElementById('register-submit-btn').disabled = true;
+      document.getElementById('register-submit-btn').textContent = 'Creating account…';
+    }
+  });
+
+  /* ── LIVE FIELD FEEDBACK ─────────────────────────────── */
+  document.getElementById('username').addEventListener('blur', function() {
+    if (!this.value) return clearState(this);
+    if (USERNAME_RE.test(this.value.trim())) { setValid(this); hideErr('reg-user-err'); }
+    else { setInvalid(this); showErr('reg-user-err'); }
+  });
+
+  document.getElementById('email-reg').addEventListener('blur', function() {
+    if (!this.value) return clearState(this);
+    if (EMAIL_RE.test(this.value.trim())) { setValid(this); hideErr('reg-email-err'); }
+    else { setInvalid(this); showErr('reg-email-err'); }
+  });
+
+  document.getElementById('email-login').addEventListener('blur', function() {
+    if (!this.value) return clearState(this);
+    if (EMAIL_RE.test(this.value.trim())) { setValid(this); hideErr('login-email-err'); }
+    else { setInvalid(this); showErr('login-email-err'); }
+  });
+
+  document.getElementById('confirm-password').addEventListener('input', function() {
+    const pw = document.getElementById('password-reg').value;
+    if (!this.value) return clearState(this);
+    if (this.value === pw) { setValid(this); hideErr('reg-confirm-err'); }
+    else { setInvalid(this); showErr('reg-confirm-err'); }
+  });
 </script>
 {% endblock %}
