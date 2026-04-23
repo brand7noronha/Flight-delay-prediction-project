@@ -20,7 +20,7 @@
     padding: 16px 24px;
     display: flex; align-items: center; gap: 14px;
     flex-wrap: wrap;
-    max-width: 1080px; margin: 0 auto 32px; padding: 16px 24px;
+    max-width: 1080px; margin: 0 auto 32px;
   }
   .filter-bar .form-label { white-space: nowrap; margin-bottom: 0; }
   .filter-select {
@@ -127,15 +127,17 @@
     </div>
     <div class="flex gap-12 items-center">
       <select class="filter-select" id="airline-filter" onchange="updateCharts()">
-        <option value="ALL">All airlines</option>
+        <option value="ALL" {% if current_airline == 'ALL' %}selected{% endif %}>All airlines</option>
         {% for code, name in airlines %}
-          <option value="{{ code }}">{{ code }} — {{ name }}</option>
+          <option value="{{ code }}" {% if current_airline == code %}selected{% endif %}>{{ code }} — {{ name }}</option>
         {% endfor %}
       </select>
       <select class="filter-select" id="month-filter" onchange="updateCharts()">
-        <option value="0">All months</option>
+        <option value="0" {% if current_month == '0' %}selected{% endif %}>All months</option>
         {% for m in range(1,13) %}
-          <option value="{{ m }}">{{ ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m-1] }}</option>
+          <option value="{{ m }}" {% if current_month|int == m %}selected{% endif %}>
+            {{ ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m-1] }}
+          </option>
         {% endfor %}
       </select>
     </div>
@@ -146,11 +148,13 @@
     <div class="tile fade-up">
       <div class="tile-label">Total flights tracked</div>
       <div class="tile-value">{{ stats.total_flights | default('—') }}</div>
-      <div class="tile-sub">Last 7 days</div>
+      <div class="tile-sub">Last 30 days</div>
     </div>
     <div class="tile fade-up">
       <div class="tile-label">Overall delay rate</div>
-      <div class="tile-value text-amber">{{ stats.delay_rate | default('—') }}%</div>
+      <div class="tile-value {% if stats.delay_rate > 50 %}text-red{% elif stats.delay_rate > 30 %}text-amber{% else %}text-green{% endif %}">
+        {{ stats.delay_rate | default('—') }}%
+      </div>
       <div class="tile-sub">Arrivals &gt; 15 min late</div>
     </div>
     <div class="tile fade-up">
@@ -264,110 +268,140 @@
   };
 
   // ── AIRLINE CHART ─────────────────────────────────────
-  new Chart(document.getElementById('chart-airline'), {
-    type: 'bar',
-    data: {
-      labels: data.airline.labels,
-      datasets: [{
-        label: 'Delay rate %',
-        data: data.airline.values,
-        backgroundColor: data.airline.values.map(v =>
-          v > 50 ? 'rgba(255,69,58,0.7)' : v > 35 ? 'rgba(255,214,10,0.7)' : 'rgba(48,209,88,0.7)'
-        ),
-        borderRadius: 6,
-        borderSkipped: false,
-      }]
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: {
-        x: { grid: { color: gridColor }, ticks: { color: '#6e6e73' } },
-        y: { grid: { color: gridColor }, ticks: { color: '#6e6e73', callback: v => v+'%' }, max: 100 }
+  if(data.airline.labels && data.airline.labels.length > 0) {
+    new Chart(document.getElementById('chart-airline'), {
+      type: 'bar',
+      data: {
+        labels: data.airline.labels,
+        datasets: [{
+          label: 'Delay rate %',
+          data: data.airline.values,
+          backgroundColor: data.airline.values.map(v =>
+            v > 50 ? 'rgba(255,69,58,0.7)' : v > 35 ? 'rgba(255,214,10,0.7)' : 'rgba(48,209,88,0.7)'
+          ),
+          borderRadius: 6,
+          borderSkipped: false,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { grid: { color: gridColor }, ticks: { color: '#6e6e73' } },
+          y: { grid: { color: gridColor }, ticks: { color: '#6e6e73', callback: v => v+'%' }, max: 100 }
+        }
       }
-    }
-  });
+    });
+  }
 
   // ── HOUR CHART ────────────────────────────────────────
-  new Chart(document.getElementById('chart-hour'), {
-    type: 'line',
-    data: {
-      labels: data.hour.labels,
-      datasets: [{
-        label: 'Delay rate %',
-        data: data.hour.values,
-        borderColor: accent,
-        backgroundColor: 'rgba(41,151,255,0.08)',
-        borderWidth: 2,
-        pointRadius: 3,
-        pointBackgroundColor: accent,
-        fill: true,
-        tension: 0.4,
-      }]
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: {
-        x: { grid: { color: gridColor }, ticks: { color: '#6e6e73' } },
-        y: { grid: { color: gridColor }, ticks: { color: '#6e6e73', callback: v => v+'%' } }
+  if(data.hour.labels && data.hour.labels.length > 0) {
+    new Chart(document.getElementById('chart-hour'), {
+      type: 'line',
+      data: {
+        labels: data.hour.labels,
+        datasets: [{
+          label: 'Delay rate %',
+          data: data.hour.values,
+          borderColor: accent,
+          backgroundColor: 'rgba(41,151,255,0.08)',
+          borderWidth: 2,
+          pointRadius: 3,
+          pointBackgroundColor: accent,
+          fill: true,
+          tension: 0.4,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { grid: { color: gridColor }, ticks: { color: '#6e6e73' } },
+          y: { grid: { color: gridColor }, ticks: { color: '#6e6e73', callback: v => v+'%' } }
+        }
       }
-    }
-  });
+    });
+  }
 
   // ── MONTH CHART ───────────────────────────────────────
-  new Chart(document.getElementById('chart-month'), {
-    type: 'bar',
-    data: {
-      labels: data.month.labels,
-      datasets: [{
-        label: 'Delay rate %',
-        data: data.month.values,
-        backgroundColor: 'rgba(41,151,255,0.6)',
-        borderRadius: 6,
-        borderSkipped: false,
-      }]
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: {
-        x: { grid: { color: gridColor }, ticks: { color: '#6e6e73' } },
-        y: { grid: { color: gridColor }, ticks: { color: '#6e6e73', callback: v => v+'%' } }
+  if(data.month.labels && data.month.labels.length > 0) {
+    new Chart(document.getElementById('chart-month'), {
+      type: 'bar',
+      data: {
+        labels: data.month.labels,
+        datasets: [{
+          label: 'Delay rate %',
+          data: data.month.values,
+          backgroundColor: 'rgba(41,151,255,0.6)',
+          borderRadius: 6,
+          borderSkipped: false,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { grid: { color: gridColor }, ticks: { color: '#6e6e73' } },
+          y: { grid: { color: gridColor }, ticks: { color: '#6e6e73', callback: v => v+'%' } }
+        }
       }
-    }
-  });
+    });
+  }
 
   // ── DAY CHART ─────────────────────────────────────────
-  new Chart(document.getElementById('chart-day'), {
-    type: 'bar',
-    data: {
-      labels: data.day.labels,
-      datasets: [{
-        label: 'Delay rate %',
-        data: data.day.values,
-        backgroundColor: data.day.values.map(v =>
-          v === Math.max(...data.day.values) ? 'rgba(255,69,58,0.7)' : 'rgba(41,151,255,0.5)'
-        ),
-        borderRadius: 6,
-        borderSkipped: false,
-      }]
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: {
-        x: { grid: { color: gridColor }, ticks: { color: '#6e6e73' } },
-        y: { grid: { color: gridColor }, ticks: { color: '#6e6e73', callback: v => v+'%' } }
+  if(data.day.labels && data.day.labels.length > 0) {
+    new Chart(document.getElementById('chart-day'), {
+      type: 'bar',
+      data: {
+        labels: data.day.labels,
+        datasets: [{
+          label: 'Delay rate %',
+          data: data.day.values,
+          backgroundColor: data.day.values.map(v =>
+            v === Math.max(...data.day.values) ? 'rgba(255,69,58,0.7)' : 'rgba(41,151,255,0.5)'
+          ),
+          borderRadius: 6,
+          borderSkipped: false,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { grid: { color: gridColor }, ticks: { color: '#6e6e73' } },
+          y: { grid: { color: gridColor }, ticks: { color: '#6e6e73', callback: v => v+'%' } }
+        }
       }
-    }
-  });
+    });
+  }
 
+  // Function to update charts when filters change
   function updateCharts() {
-    // Wire to /api/analytics?airline=XX&month=YY for dynamic filtering
     const airline = document.getElementById('airline-filter').value;
-    const month   = document.getElementById('month-filter').value;
+    const month = document.getElementById('month-filter').value;
+    
+    // Reload the page with the new filters
     window.location.href = `/dashboard?airline=${airline}&month=${month}`;
   }
+
+  // Set the select elements to show current values on page load
+  document.addEventListener('DOMContentLoaded', function() {
+    const airlineSelect = document.getElementById('airline-filter');
+    const monthSelect = document.getElementById('month-filter');
+    
+    // Get current values from template
+    const currentAirline = '{{ current_airline }}';
+    const currentMonth = '{{ current_month }}';
+    
+    console.log('Dashboard loaded with filters - Airline:', currentAirline, 'Month:', currentMonth);
+    
+    if (currentAirline && currentAirline !== 'ALL') {
+      airlineSelect.value = currentAirline;
+    }
+    
+    if (currentMonth && currentMonth !== '0') {
+      monthSelect.value = currentMonth;
+    }
+  });
 </script>
 {% endblock %}

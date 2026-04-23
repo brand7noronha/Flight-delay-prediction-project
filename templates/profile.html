@@ -123,6 +123,104 @@
   @media(max-width:640px) {
     .htable .hide-mobile { display: none; }
   }
+
+  /* ── DANGER ZONE ─────────────────────────────────────── */
+  .danger-zone {
+    max-width: 1080px; margin: 48px auto 0; padding: 0 24px;
+  }
+  .danger-card {
+    background: var(--surface);
+    border: 1px solid rgba(255,69,58,0.25);
+    border-radius: var(--radius-lg);
+    padding: 28px 32px;
+    display: flex; align-items: center; justify-content: space-between;
+    flex-wrap: wrap; gap: 20px;
+  }
+  .danger-card-text h3 {
+    font-family: var(--font-display);
+    font-size: 16px; font-weight: 600;
+    color: var(--red);
+    margin-bottom: 4px;
+  }
+  .danger-card-text p {
+    font-size: 13px; color: var(--text-tertiary); max-width: 440px;
+  }
+  .btn-danger {
+    background: var(--red-dim);
+    color: var(--red);
+    border: 1px solid rgba(255,69,58,0.3);
+    padding: 10px 20px;
+    border-radius: var(--radius-md);
+    font-size: 14px; font-weight: 500;
+    cursor: pointer; transition: var(--transition);
+    white-space: nowrap;
+  }
+  .btn-danger:hover { background: rgba(255,69,58,0.28); }
+
+  /* ── DELETE MODAL ────────────────────────────────────── */
+  .modal-overlay {
+    display: none;
+    position: fixed; inset: 0; z-index: 2000;
+    background: rgba(0,0,0,0.72);
+    backdrop-filter: blur(6px);
+    align-items: center; justify-content: center;
+    padding: 24px;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    padding: 36px 32px;
+    width: 100%; max-width: 420px;
+    animation: modalIn 0.2s ease;
+  }
+  @keyframes modalIn {
+    from { opacity: 0; transform: scale(0.96) translateY(8px); }
+    to   { opacity: 1; transform: scale(1) translateY(0); }
+  }
+  .modal-icon {
+    width: 52px; height: 52px;
+    background: var(--red-dim);
+    border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 24px;
+    margin-bottom: 20px;
+  }
+  .modal-title {
+    font-family: var(--font-display);
+    font-size: 22px; font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: -0.5px;
+    margin-bottom: 10px;
+  }
+  .modal-desc {
+    font-size: 14px; color: var(--text-secondary);
+    line-height: 1.65; margin-bottom: 24px;
+  }
+  .modal-desc strong { color: var(--red); }
+  .modal-actions { display: flex; gap: 10px; }
+  .modal-actions .btn-cancel {
+    flex: 1; padding: 12px;
+    background: var(--bg-3);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    font-size: 14px; font-weight: 500;
+    cursor: pointer; transition: var(--transition);
+  }
+  .modal-actions .btn-cancel:hover { background: var(--bg-4); }
+  .modal-actions .btn-delete-confirm {
+    flex: 1; padding: 12px;
+    background: var(--red);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius-md);
+    font-size: 14px; font-weight: 600;
+    cursor: pointer; transition: var(--transition);
+  }
+  .modal-actions .btn-delete-confirm:hover { background: #d93025; }
+  .modal-actions .btn-delete-confirm:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>
 {% endblock %}
 
@@ -233,5 +331,96 @@
     </div>
   </div>
 
+  <!-- ── DANGER ZONE ────────────────────────────────────── -->
+  <div class="danger-zone fade-up">
+    <p class="label mb-16" style="color:var(--red);">Danger zone</p>
+    <div class="danger-card">
+      <div class="danger-card-text">
+        <h3>Delete account</h3>
+        <p>
+          Permanently remove your account, all search history, and predictions.
+          This action cannot be undone.
+        </p>
+      </div>
+      <button class="btn-danger" onclick="openDeleteModal()">Delete my account</button>
+    </div>
+  </div>
+
 </div>
+
+<!-- ── DELETE ACCOUNT MODAL ───────────────────────────────── -->
+<div class="modal-overlay" id="delete-modal">
+  <div class="modal-box">
+    <div class="modal-icon">⚠️</div>
+    <div class="modal-title">Delete your account?</div>
+    <p class="modal-desc">
+      This will permanently delete your account, all <strong>{{ stats.total_searches }} search{{ 'es' if stats.total_searches != 1 else '' }}</strong>,
+      and all prediction history. There is <strong>no way to recover</strong> this data.
+    </p>
+    <p class="modal-desc" style="margin-bottom:20px;">
+      Enter your password to confirm:
+    </p>
+
+    <form action="/delete-account" method="POST" id="delete-form">
+      <div class="form-group" style="margin-bottom:20px;">
+        <input type="password" name="password" id="delete-pw"
+               placeholder="Your current password"
+               class="form-input"
+               autocomplete="current-password"
+               required>
+        <div style="font-size:12px;color:var(--red);margin-top:6px;display:none;" id="delete-pw-err">
+          Password is required.
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn-cancel" onclick="closeDeleteModal()">Cancel</button>
+        <button type="submit" class="btn-delete-confirm" id="delete-confirm-btn">
+          Yes, delete everything
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  /* ── DELETE MODAL CONTROLS ──────────────────────────── */
+  function openDeleteModal() {
+    document.getElementById('delete-modal').classList.add('open');
+    setTimeout(() => document.getElementById('delete-pw').focus(), 150);
+  }
+
+  function closeDeleteModal() {
+    document.getElementById('delete-modal').classList.remove('open');
+    document.getElementById('delete-pw').value = '';
+    document.getElementById('delete-pw-err').style.display = 'none';
+  }
+
+  // Close on overlay click
+  document.getElementById('delete-modal').addEventListener('click', function(e) {
+    if (e.target === this) closeDeleteModal();
+  });
+
+  // Close on Escape key
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeDeleteModal();
+  });
+
+  // Form submission guard
+  document.getElementById('delete-form').addEventListener('submit', function(e) {
+    const pw = document.getElementById('delete-pw');
+    const errEl = document.getElementById('delete-pw-err');
+    if (!pw.value.trim()) {
+      errEl.style.display = 'block';
+      e.preventDefault();
+      return;
+    }
+    errEl.style.display = 'none';
+    const btn = document.getElementById('delete-confirm-btn');
+    btn.disabled = true;
+    btn.textContent = 'Deleting…';
+  });
+</script>
 {% endblock %}
