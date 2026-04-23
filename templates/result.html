@@ -3,16 +3,18 @@
 
 {% block head %}
 <style>
-  .result-page { padding: 56px 0 80px; }
+  .result-page { padding: 40px 0 80px; }
 
   /* ── BIG VERDICT ─────────────────────────────────────── */
   .verdict-hero {
     text-align: center;
-    padding: 48px 24px 40px;
+    padding: 36px 24px 48px;
     position: relative;
+    max-width: 680px;
+    margin: 0 auto 24px;
   }
   .verdict-ring {
-    width: 160px; height: 160px;
+    width: 180px; height: 180px;
     margin: 0 auto 28px;
     position: relative;
   }
@@ -26,18 +28,42 @@
   .verdict-pct {
     position: absolute; top: 50%; left: 50%;
     transform: translate(-50%,-50%);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    width: 100%;
+    height: 100%;
     font-family: var(--font-display);
-    font-size: 32px; font-weight: 700;
-    letter-spacing: -1px;
     color: var(--text-primary);
+  }
+  .verdict-pct-number {
+    font-size: 36px;
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    line-height: 1;
+  }
+  .verdict-pct-unit {
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--text-tertiary);
+  }
+  .verdict-pct-label {
+    margin-top: 5px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-tertiary);
+    text-transform: capitalize;
+    letter-spacing: 0.08em;
   }
   .verdict-pct span { font-size: 14px; font-weight: 400; color: var(--text-tertiary); }
 
   .verdict-label {
     font-family: var(--font-display);
-    font-size: 36px; font-weight: 700;
-    letter-spacing: -1px;
-    margin-bottom: 10px;
+    font-size: 34px; font-weight: 700;
+    letter-spacing: -0.04em;
+    margin-bottom: 14px;
   }
   .verdict-label.on-time  { color: var(--green); }
   .verdict-label.delayed  { color: var(--red); }
@@ -48,82 +74,85 @@
   .result-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 16px;
-    max-width: 860px; margin: 40px auto 0; padding: 0 24px;
+    gap: 20px;
+    max-width: 920px; margin: 36px auto 0; padding: 0 24px;
   }
-  @media(max-width:640px) { .result-grid { grid-template-columns: 1fr; } }
+  @media(max-width:760px) { .result-grid { grid-template-columns: 1fr; } }
 
   .result-card {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
-    padding: 24px;
+    padding: 28px;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02);
   }
   .result-card-title {
-    font-size: 12px; font-weight: 500;
-    letter-spacing: 0.08em;
+    font-size: 13px; font-weight: 600;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
     color: var(--text-tertiary);
-    margin-bottom: 16px;
+    margin-bottom: 18px;
     padding-bottom: 12px;
     border-bottom: 1px solid var(--border);
   }
   .detail-row {
     display: flex; justify-content: space-between; align-items: center;
-    padding: 10px 0;
+    padding: 14px 0;
     border-bottom: 1px solid var(--border);
     font-size: 14px;
   }
   .detail-row:last-child { border-bottom: none; }
-  .detail-key { color: var(--text-secondary); }
-  .detail-val { color: var(--text-primary); font-weight: 500; font-family: var(--font-mono); font-size: 13px; }
+  .detail-key { color: var(--text-secondary); font-size: 13px; }
+  .detail-val { color: var(--text-primary); font-weight: 600; font-family: var(--font-mono); font-size: 14px; }
 
   /* ── HISTORICAL STATS ────────────────────────────────── */
   .hist-stats {
-    display: grid; grid-template-columns: 1fr 1fr 1fr;
-    gap: 12px; margin-top: 14px;
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px; margin-top: 20px;
   }
   .hist-stat {
     background: var(--bg-3);
     border-radius: var(--radius-md);
-    padding: 14px; text-align: center;
+    padding: 18px 14px;
+    text-align: center;
   }
   .hist-stat-num {
     font-family: var(--font-display);
-    font-size: 22px; font-weight: 700;
+    font-size: 24px; font-weight: 700;
     letter-spacing: -0.8px;
     color: var(--text-primary);
   }
-  .hist-stat-label { font-size: 11px; color: var(--text-tertiary); margin-top: 3px; }
+  .hist-stat-label { font-size: 11px; color: var(--text-tertiary); margin-top: 6px; letter-spacing: 0.09em; text-transform: uppercase; }
 
   /* ── RISK BADGE LARGE ────────────────────────────────── */
   .risk-badge-lg {
     display: inline-flex; align-items: center; gap: 8px;
-    font-size: 15px; font-weight: 600;
-    padding: 10px 20px;
-    border-radius: 980px;
-    margin-top: 16px;
+    font-size: 14px; font-weight: 700;
+    padding: 10px 22px;
+    border-radius: 999px;
+    margin-top: 18px;
+    letter-spacing: 0.04em;
   }
 
   /* ── FEEDBACK FORM ───────────────────────────────────── */
   .feedback-card {
-    max-width: 860px; margin: 24px auto 0; padding: 0 24px;
+    max-width: 860px; margin: 28px auto 0; padding: 0 24px;
   }
   .feedback-inner {
     background: var(--bg-2);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
-    padding: 24px;
+    padding: 26px 28px;
     display: flex; align-items: center; justify-content: space-between;
-    gap: 16px; flex-wrap: wrap;
+    gap: 18px; flex-wrap: wrap;
   }
-  .feedback-question { font-size: 14px; color: var(--text-secondary); }
+  .feedback-question { font-size: 14px; color: var(--text-secondary); line-height: 1.65; }
   .feedback-question strong { color: var(--text-primary); }
-  .feedback-btns { display: flex; gap: 8px; }
+  .feedback-btns { display: flex; gap: 10px; flex-wrap: wrap; }
 
   /* ── ACTIONS ─────────────────────────────────────────── */
   .result-actions {
-    display: flex; gap: 12px; justify-content: center;
+    display: flex; gap: 14px; justify-content: center;
     flex-wrap: wrap;
     max-width: 860px; margin: 32px auto 0; padding: 0 24px;
   }
@@ -144,17 +173,28 @@
                 id="ring-arc"
                 stroke-dashoffset="408"/>
       </svg>
-      <div class="verdict-pct">
-        {{ (result.delay_probability * 100) | round(0) | int }}%<br>
-        <span>delay prob.</span>
+      <div class="verdict-pct verdict-pct--stacked">
+        {% if result.predicted_delay_min is not none %}
+          {% if result.predicted_delay_min < 0 %}
+            <div class="verdict-pct-number">{{ result.predicted_delay_min | abs | round(0) | int }} <span class="verdict-pct-unit">mins</span></div>
+            <div class="verdict-pct-label">arriving early</div>
+          {% elif result.predicted_delay_min == 0 %}
+            <div class="verdict-pct-number">{{ result.predicted_delay_min | round(0) | int }} <span class="verdict-pct-unit">mins</span></div>
+            <div class="verdict-pct-label">on time</div>
+          {% else %}
+            <div class="verdict-pct-number">{{ result.predicted_delay_min | round(0) | int }} <span class="verdict-pct-unit">mins</span></div>
+            <div class="verdict-pct-label">delayed</div>
+          {% endif %}
+        {% else %}
+          <div class="verdict-pct-number">N/A <span class="verdict-pct-unit">mins</span></div>
+          <div class="verdict-pct-label">minutes</div>
+        {% endif %}
       </div>
     </div>
 
     <div class="verdict-label {{ 'delayed' if result.is_delayed else 'on-time' }}">
       {% if result.is_delayed %}⚠ Likely Delayed{% else %}✓ Likely On Time{% endif %}
     </div>
-
-    <p class="verdict-message">{{ result.message }}</p>
 
     <div class="risk-badge-lg
       {% if result.risk_level == 'Low' %}badge-green
@@ -303,7 +343,7 @@
 
 {% block scripts %}
 <script>
-  // Animate the probability ring on page load
+  // Animate the ring fill on page load using delay probability
   const prob = {{ result.delay_probability }};
   const circumference = 408;
   const offset = circumference * (1 - prob);
